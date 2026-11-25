@@ -64,11 +64,13 @@ public sealed class WorkspaceRoom : IDisposable
     };
 
     private readonly SettingsService _settings;
+    private readonly BrowserToolsService _browserTools;
     private readonly AcpClientService _acp;
     private readonly AgyCliService _cli;
     private readonly WorkspaceService _workspace;
     private readonly GitService _git;
     private readonly TerminalService _terminal;
+    private readonly SemaphoreSlim _connectLock = new(1, 1);
     private readonly ConcurrentDictionary<string, ClientSocket> _clients = new();
     private readonly object _historyLock = new();
     private readonly List<ReplayEntry> _replay = new();
@@ -100,7 +102,8 @@ public sealed class WorkspaceRoom : IDisposable
         IsShared = isShared;
         _settings = settings;
 
-        _acp = new AcpClientService(_settings);
+        _browserTools = new BrowserToolsService(_settings);
+        _acp = new AcpClientService(_settings, _browserTools);
         _cli = new AgyCliService(_settings);
         _workspace = new WorkspaceService();
         _git = new GitService();
@@ -246,8 +249,8 @@ public sealed class WorkspaceRoom : IDisposable
         lock (_historyLock)
         {
             _replay.Add(new ReplayEntry(eventName, payload));
-            if (_replay.Count > 600)
-                _replay.RemoveRange(0, _replay.Count - 600);
+            if (_replay.Count > 2000)
+                _replay.RemoveRange(0, _replay.Count - 2000);
         }
     }
 
@@ -326,6 +329,10 @@ public sealed class WorkspaceRoom : IDisposable
             "cli:slashReport" => await _cli.RunSlashReportAsync(GetStr(payload, "command"), CurrentWorkspace),
             "cli:login" => new { ok = false, error = "Đang chạy Server từ xa: hãy đăng nhập agy 1 lần trên máy chủ hoặc nhập Gemini API Key trong Settings." },
 
+            "env:status" => await _browserTools.GetEnvironmentStatusAsync(),
+            "env:launchBrowser" => await _browserTools.LaunchDebugBrowserAsync(GetStr(payload, "url")),
+            "env:installNode" => await _browserTools.InstallPortableNodeJsAsync(),
+
             "terminal:start" => StartTerminal(),
             "terminal:input" => await SendTerminalInputAsync(GetStr(payload, "command")),
             "terminal:restart" => RestartTerminal(),
@@ -357,45 +364,61 @@ public sealed class WorkspaceRoom : IDisposable
         };
     }
 
-    public async Task<object> EnsureConnectedAsync(bool forceReconnect = false)
+    private string SessionScopeKey => $"room:{Id}:{Path.GetFullPath(CurrentWorkspace)}";
+
+    public async Task<object> EnsureConnectedAsync(bool forceReconnect = false, bool forceFreshSession = false)
     {
-        if (!forceReconnect && _settings.Current.TransportMode != "stream-json" && _acp.IsRunning && !string.IsNullOrEmpty(_acp.ActiveSessionId))
-        {
-            return new
-            {
-                ok = true,
-                reused = true,
-                agentInfo = _acp.AgentInfo,
-                authMethods = _acp.AuthMethods,
-                tier = _acp.TierInfo,
-                session = _lastSessionPayload,
-                configOptions = _lastConfigOptions
-            };
-        }
-
-        if (string.Equals(_settings.Current.TransportMode, "stream-json", StringComparison.OrdinalIgnoreCase))
-        {
-            await _acp.StopAsync();
-            _connState = "connected";
-            _connLabel = "Stream-JSON CLI";
-            return await _cli.StartStreamSessionAsync(CurrentWorkspace, _settings.Current.DefaultModel, _settings.Current.DefaultMode);
-        }
-
-        _cli.StopStreamSession();
-        var res = await _acp.ConnectAsync(CurrentWorkspace);
+        await _connectLock.WaitAsync();
         try
         {
-            var el = JsonSerializer.SerializeToElement(res, JsonOpts);
-            if (el.TryGetProperty("session", out var sess))
+            if (!forceReconnect && _settings.Current.TransportMode != "stream-json" && _acp.IsRunning && !string.IsNullOrEmpty(_acp.ActiveSessionId))
             {
-                _lastSessionPayload = sess.Clone();
-                if (sess.TryGetProperty("configOptions", out var co))
-                    _lastConfigOptions = co.Clone();
+                return new
+                {
+                    ok = true,
+                    reused = true,
+                    agentInfo = _acp.AgentInfo,
+                    authMethods = _acp.AuthMethods,
+                    tier = _acp.TierInfo,
+                    session = _lastSessionPayload,
+                    configOptions = _lastConfigOptions
+                };
             }
+
+            if (string.Equals(_settings.Current.TransportMode, "stream-json", StringComparison.OrdinalIgnoreCase))
+            {
+                await _acp.StopAsync();
+                _connState = "connected";
+                _connLabel = "Stream-JSON CLI";
+                var savedConv = forceFreshSession ? null : _settings.GetSavedSessionId(SessionScopeKey);
+                return await _cli.StartStreamSessionAsync(CurrentWorkspace, _settings.Current.DefaultModel, _settings.Current.DefaultMode, savedConv);
+            }
+
+            _cli.StopStreamSession();
+            var resumeId = forceFreshSession
+                ? null
+                : (_acp.ActiveSessionId ?? _acp.LastKnownSessionId ?? _settings.GetSavedSessionId(SessionScopeKey));
+            var res = await _acp.ConnectAsync(CurrentWorkspace, resumeId);
+            if (!string.IsNullOrWhiteSpace(_acp.ActiveSessionId))
+                _settings.SetSavedSessionId(SessionScopeKey, _acp.ActiveSessionId);
+            try
+            {
+                var el = JsonSerializer.SerializeToElement(res, JsonOpts);
+                if (el.TryGetProperty("session", out var sess))
+                {
+                    _lastSessionPayload = sess.Clone();
+                    if (sess.TryGetProperty("configOptions", out var co))
+                        _lastConfigOptions = co.Clone();
+                }
+            }
+            catch { }
+            OnRoomsChanged?.Invoke();
+            return res;
         }
-        catch { }
-        OnRoomsChanged?.Invoke();
-        return res;
+        finally
+        {
+            _connectLock.Release();
+        }
     }
 
     private async Task<object> HandleNewSessionAsync()
@@ -404,12 +427,16 @@ public sealed class WorkspaceRoom : IDisposable
         _sessionTitle = "Phiên mới";
         _ctxUsed = 0;
         _busy = false;
+        _settings.SetSavedSessionId(SessionScopeKey, null);
 
         object res;
         if (string.Equals(_settings.Current.TransportMode, "stream-json", StringComparison.OrdinalIgnoreCase))
-            res = await _cli.StartStreamSessionAsync(CurrentWorkspace, _settings.Current.DefaultModel, _settings.Current.DefaultMode);
+            res = await _cli.StartStreamSessionAsync(CurrentWorkspace, _settings.Current.DefaultModel, _settings.Current.DefaultMode, resumeConversationId: null);
         else
             res = await _acp.NewSessionAsync(CurrentWorkspace);
+
+        if (!string.IsNullOrWhiteSpace(_acp.ActiveSessionId))
+            _settings.SetSavedSessionId(SessionScopeKey, _acp.ActiveSessionId);
 
         try
         {
@@ -432,6 +459,8 @@ public sealed class WorkspaceRoom : IDisposable
     {
         ClearReplay();
         var res = await _acp.LoadSessionAsync(sessionId, cwd);
+        if (!string.IsNullOrWhiteSpace(_acp.ActiveSessionId))
+            _settings.SetSavedSessionId(SessionScopeKey, _acp.ActiveSessionId);
         try
         {
             var el = JsonSerializer.SerializeToElement(res, JsonOpts);
@@ -610,6 +639,20 @@ public sealed class WorkspaceRoom : IDisposable
         {
             var v = p10.GetBoolean();
             if (v != _settings.Current.AutoApprovePermissions) { _settings.Current.AutoApprovePermissions = v; needReconnect = true; }
+        }
+        if (payload.TryGetProperty("enableBrowserMcp", out var p11) && p11.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            var v = p11.GetBoolean();
+            if (v != _settings.Current.EnableBrowserMcp) { _settings.Current.EnableBrowserMcp = v; needReconnect = true; }
+        }
+        if (payload.TryGetProperty("autoLaunchDebugChrome", out var p12) && p12.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            _settings.Current.AutoLaunchDebugChrome = p12.GetBoolean();
+        }
+        if (payload.TryGetProperty("chromeDebugPort", out var p13) && p13.TryGetInt32(out var dp))
+        {
+            var clamped = Math.Clamp(dp, 1024, 65535);
+            if (clamped != _settings.Current.ChromeDebugPort) { _settings.Current.ChromeDebugPort = clamped; needReconnect = true; }
         }
 
         _settings.Save();

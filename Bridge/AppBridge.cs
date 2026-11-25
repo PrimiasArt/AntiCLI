@@ -18,6 +18,7 @@ public sealed class AppBridge : IDisposable
     private readonly WorkspaceService _workspace;
     private readonly GitService _git;
     private readonly TerminalService _terminal;
+    private readonly BrowserToolsService _browserTools;
     private readonly UpdateService _updater;
     private readonly Action<string> _postJsonToUi;
     private readonly Func<string?, string?> _pickFolderOnUiThread;
@@ -36,7 +37,8 @@ public sealed class AppBridge : IDisposable
         _setWindowTitle = setWindowTitle;
 
         _settings = new SettingsService();
-        _acp = new AcpClientService(_settings);
+        _browserTools = new BrowserToolsService(_settings);
+        _acp = new AcpClientService(_settings, _browserTools);
         _cli = new AgyCliService(_settings);
         _workspace = new WorkspaceService();
         _git = new GitService();
@@ -138,6 +140,10 @@ public sealed class AppBridge : IDisposable
                 "cli:slashReport" => await _cli.RunSlashReportAsync(GetStr(payload, "command"), CurrentWorkspace),
                 "cli:login" => _cli.LaunchInteractiveLogin(),
 
+                "env:status" => await _browserTools.GetEnvironmentStatusAsync(),
+                "env:launchBrowser" => await _browserTools.LaunchDebugBrowserAsync(GetStr(payload, "url")),
+                "env:installNode" => await _browserTools.InstallPortableNodeJsAsync(),
+
                 "terminal:start" => StartTerminal(),
                 "terminal:input" => await SendTerminalInputAsync(GetStr(payload, "command")),
                 "terminal:restart" => RestartTerminal(),
@@ -184,7 +190,7 @@ public sealed class AppBridge : IDisposable
         };
     }
 
-    private async Task<object> ConnectTransportAsync(string workspace)
+    private async Task<object> ConnectTransportAsync(string workspace, bool forceFresh = false)
     {
         if (string.Equals(_settings.Current.TransportMode, "stream-json", StringComparison.OrdinalIgnoreCase))
         {
@@ -195,15 +201,23 @@ public sealed class AppBridge : IDisposable
         }
 
         _cli.StopStreamSession();
-        return await _acp.ConnectAsync(workspace);
+        var scopeKey = $"desktop:{Path.GetFullPath(workspace)}";
+        var resumeId = forceFresh ? null : (_acp.ActiveSessionId ?? _acp.LastKnownSessionId ?? _settings.GetSavedSessionId(scopeKey));
+        var res = await _acp.ConnectAsync(workspace, resumeId);
+        if (!string.IsNullOrWhiteSpace(_acp.ActiveSessionId))
+            _settings.SetSavedSessionId(scopeKey, _acp.ActiveSessionId);
+        return res;
     }
 
     private async Task<object> HandleNewSessionAsync()
     {
+        var scopeKey = $"desktop:{Path.GetFullPath(CurrentWorkspace)}";
         if (string.Equals(_settings.Current.TransportMode, "stream-json", StringComparison.OrdinalIgnoreCase))
             return await _cli.StartStreamSessionAsync(CurrentWorkspace, _settings.Current.DefaultModel, _settings.Current.DefaultMode);
 
-        return await _acp.NewSessionAsync(CurrentWorkspace);
+        var res = await _acp.NewSessionAsync(CurrentWorkspace);
+        _settings.SetSavedSessionId(scopeKey, _acp.ActiveSessionId);
+        return res;
     }
 
     private async Task<object> HandlePromptAsync(JsonElement payload)
@@ -284,6 +298,20 @@ public sealed class AppBridge : IDisposable
         {
             var v = p10.GetBoolean();
             if (v != _settings.Current.AutoApprovePermissions) { _settings.Current.AutoApprovePermissions = v; needReconnect = true; }
+        }
+        if (payload.TryGetProperty("enableBrowserMcp", out var p11) && p11.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            var v = p11.GetBoolean();
+            if (v != _settings.Current.EnableBrowserMcp) { _settings.Current.EnableBrowserMcp = v; needReconnect = true; }
+        }
+        if (payload.TryGetProperty("autoLaunchDebugChrome", out var p12) && p12.ValueKind is JsonValueKind.True or JsonValueKind.False)
+        {
+            _settings.Current.AutoLaunchDebugChrome = p12.GetBoolean();
+        }
+        if (payload.TryGetProperty("chromeDebugPort", out var p13) && p13.TryGetInt32(out var dp))
+        {
+            var clamped = Math.Clamp(dp, 1024, 65535);
+            if (clamped != _settings.Current.ChromeDebugPort) { _settings.Current.ChromeDebugPort = clamped; needReconnect = true; }
         }
 
         _settings.Save();

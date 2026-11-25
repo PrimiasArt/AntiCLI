@@ -19,9 +19,13 @@ public sealed class AppSettings
     public bool ShowThinkingByDefault { get; set; } = false;
     public bool EnableSandbox { get; set; } = false;
     public bool AutoApprovePermissions { get; set; } = false;
+    public bool EnableBrowserMcp { get; set; } = true;
+    public bool AutoLaunchDebugChrome { get; set; } = false;
+    public int ChromeDebugPort { get; set; } = 9222;
     public string DefaultModel { get; set; } = "";
     public string DefaultThoughtLevel { get; set; } = "";
     public string DefaultMode { get; set; } = "default";
+    public Dictionary<string, string> SavedSessions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     [JsonIgnore]
     public string GeminiApiKeyPlain { get; set; } = "";
@@ -87,6 +91,24 @@ public sealed class SettingsService
         File.WriteAllText(_settingsPath, json, Encoding.UTF8);
     }
 
+    public string? GetSavedSessionId(string scopeKey)
+    {
+        if (string.IsNullOrWhiteSpace(scopeKey)) return null;
+        return Current.SavedSessions.TryGetValue(scopeKey, out var sid) && !string.IsNullOrWhiteSpace(sid)
+            ? sid
+            : null;
+    }
+
+    public void SetSavedSessionId(string scopeKey, string? sessionId)
+    {
+        if (string.IsNullOrWhiteSpace(scopeKey)) return;
+        if (string.IsNullOrWhiteSpace(sessionId))
+            Current.SavedSessions.Remove(scopeKey);
+        else
+            Current.SavedSessions[scopeKey] = sessionId;
+        try { Save(); } catch { }
+    }
+
     public void RecordWorkspace(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path)) return;
@@ -146,6 +168,9 @@ public sealed class SettingsService
         showThinkingByDefault = Current.ShowThinkingByDefault,
         enableSandbox = Current.EnableSandbox,
         autoApprovePermissions = Current.AutoApprovePermissions,
+        enableBrowserMcp = Current.EnableBrowserMcp,
+        autoLaunchDebugChrome = Current.AutoLaunchDebugChrome,
+        chromeDebugPort = Current.ChromeDebugPort,
         defaultModel = Current.DefaultModel,
         defaultThoughtLevel = Current.DefaultThoughtLevel,
         defaultMode = Current.DefaultMode

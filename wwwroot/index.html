@@ -163,6 +163,18 @@
           <div id="plan-items" class="plan-items"></div>
         </div>
 
+        <!-- Sticky Pending Permission Alert Bar -->
+        <div id="perm-alert-bar" class="auth-banner hidden">
+          <div class="auth-banner-text">
+            <strong>⚠ AI đang chờ bạn duyệt quyền thực thi công cụ ngoài</strong>
+            <span id="perm-alert-msg" class="mono">Bấm Cho phép [Y] hoặc Từ chối [N] để AI tiếp tục (hoặc bật "Tự động duyệt mọi tool" trong Settings).</span>
+          </div>
+          <div class="auth-banner-actions">
+            <button id="btn-perm-bar-allow" class="btn-primary-sm">✓ Cho phép [Y]</button>
+            <button id="btn-perm-bar-deny" class="btn-danger-sm">✕ Từ chối [N]</button>
+          </div>
+        </div>
+
         <!-- Auth Required Banner -->
         <div id="auth-banner" class="auth-banner hidden">
           <div class="auth-banner-text">
@@ -472,8 +484,35 @@
             </label>
             <label class="toggle-row">
               <input id="chk-auto-approve" type="checkbox" />
-              <span>Tự động duyệt mọi tool không hỏi (<code>--dangerously-skip-permissions</code> — chỉ dùng khi tin tưởng hoàn toàn)</span>
+              <span>Tự động duyệt mọi tool &amp; lệnh ngoài không hỏi (<code>--dangerously-skip-permissions</code> — bật nếu muốn AI tự mở app/chạy lệnh liên tục)</span>
             </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>Trình duyệt &amp; Tương tác bên ngoài (Browser MCP)</h3>
+          <div class="sub-box">
+            <div class="row-between">
+              <div>
+                <div class="field-label">Trạng thái trình duyệt &amp; Node.js (<code>npx</code>)</div>
+                <div id="env-browser-status" class="muted-label mono">Đang kiểm tra Chrome &amp; Node.js…</div>
+              </div>
+              <div class="btn-row">
+                <button id="btn-launch-chrome" class="btn-primary-sm">🚀 Mở Chrome cho AI</button>
+                <button id="btn-install-node" class="btn-ghost-sm hidden">📦 Cài Node.js</button>
+                <button id="btn-refresh-env" class="chip-btn" title="Kiểm tra lại">↻</button>
+              </div>
+            </div>
+            <div class="toggle-list">
+              <label class="toggle-row">
+                <input id="chk-browser-mcp" type="checkbox" checked />
+                <span>Tự gắn <code>chrome-devtools-mcp</code> vào phiên ACP (cho phép AI mở trang web, click, đọc DOM &amp; chụp ảnh màn hình)</span>
+              </label>
+              <label class="toggle-row">
+                <input id="chk-auto-chrome" type="checkbox" />
+                <span>Tự khởi động Chrome chế độ điều khiển (cổng 9222) khi tạo phiên mới</span>
+              </label>
+            </div>
           </div>
         </section>
 

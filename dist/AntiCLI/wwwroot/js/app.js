@@ -68,8 +68,9 @@ const state = {
 
   // Server / Multi-Room Mode
   serverMode: isServerMode(),
-  appVersion: '1.2.0',
+  appVersion: '1.3.0',
   latestUpdateInfo: null,
+  lastReplayUserEl: null,
   currentRoomId: localStorage.getItem('anticli_room') || 'default',
   rooms: [],
   serverInfo: null,
@@ -523,15 +524,22 @@ function handleAcpSessionUpdate(payload) {
   }
 
   if (kind === 'user_message_chunk') {
-    // Replayed user turn during session/load
+    // Replayed user turn during session/load (coalesce consecutive chunks into one bubble)
     const txt = extractChunkText(upd.content);
     if (txt) {
       hideWelcome();
-      appendUserBubble(txt, []);
+      if (state.lastReplayUserEl) {
+        const tEl = state.lastReplayUserEl.querySelector('.msg-user-text');
+        if (tEl) tEl.textContent += txt;
+      } else {
+        state.lastReplayUserEl = appendUserBubble(txt, []);
+      }
       state.activeTurn = null;
     }
     return;
   }
+
+  state.lastReplayUserEl = null;
 
   if (kind === 'agent_thought_chunk') {
     const turn = ensureActiveTurn();
@@ -666,6 +674,8 @@ function handlePermissionRequest(payload) {
   });
 
   turn.el.appendChild(card);
+  $('perm-alert-msg').textContent = `${tc.name || 'Tool'}: ${String(cmdPreview).slice(0, 140)}`;
+  $('perm-alert-bar').classList.remove('hidden');
   scrollToBottom(true);
 }
 
@@ -673,6 +683,7 @@ async function resolvePermission(requestKey, optionId, cancelled, cardEl, chosen
   if (state.pendingPermKey === requestKey) {
     state.pendingPermKey = null;
     state.pendingPermOptions = [];
+    $('perm-alert-bar').classList.add('hidden');
   }
   try {
     await invoke('acp:respondPermission', { requestKey, optionId: optionId || '', cancelled: !!cancelled });
@@ -686,6 +697,7 @@ function markPermissionCardResolved(requestKey, label, cancelled, explicitCard =
   if (state.pendingPermKey === requestKey) {
     state.pendingPermKey = null;
     state.pendingPermOptions = [];
+    $('perm-alert-bar').classList.add('hidden');
   }
   const card = explicitCard || document.querySelector(`.perm-card[data-request-key="${requestKey}"]`);
   if (card && !card.classList.contains('resolved')) {
@@ -730,6 +742,7 @@ function appendUserBubble(text, attachments = []) {
   `;
   $('stream-timeline').appendChild(el);
   scrollToBottom(true);
+  return el;
 }
 
 function appendSystemMessage(text, isError = false) {
@@ -739,6 +752,7 @@ function appendSystemMessage(text, isError = false) {
   el.textContent = text;
   $('stream-timeline').appendChild(el);
   scrollToBottom(true);
+  return el;
 }
 
 function ensureActiveTurn() {
@@ -1774,15 +1788,79 @@ function openSettingsModal() {
   $('input-agy-path').value = s.agyPath || '';
   $('chk-sandbox').checked = !!s.enableSandbox;
   $('chk-auto-approve').checked = !!s.autoApprovePermissions;
+  $('chk-browser-mcp').checked = s.enableBrowserMcp !== false;
+  $('chk-auto-chrome').checked = !!s.autoLaunchDebugChrome;
   $('select-theme').value = s.theme || 'obsidian-cyan';
   $('input-fontsize').value = s.fontSize || 13;
   $('fontsize-val').textContent = String(s.fontSize || 13);
   $('chk-show-thinking').checked = !!s.showThinkingByDefault;
 
-  $('update-cur-ver').textContent = `v${state.appVersion || '1.2.0'}`;
+  $('update-cur-ver').textContent = `v${state.appVersion || '1.3.0'}`;
   if (state.serverMode) renderServerInfoInSettings();
+  refreshBrowserEnvStatus();
 
   $('settings-modal').classList.remove('hidden');
+}
+
+async function refreshBrowserEnvStatus() {
+  const statusEl = $('env-browser-status');
+  const nodeBtn = $('btn-install-node');
+  const chromeBtn = $('btn-launch-chrome');
+  statusEl.textContent = 'Đang kiểm tra Chrome & Node.js…';
+  try {
+    const st = await invoke('env:status');
+    const bTxt = st.browserReady
+      ? `✓ ${st.browserName} (cổng ${st.debugPort} sẵn sàng)`
+      : (st.browserInstalled ? `⚠ ${st.browserName} chưa bật cổng ${st.debugPort}` : '✕ Chưa cài Chrome/Edge');
+    const nTxt = st.npxInstalled ? '✓ Node.js/npx sẵn sàng' : '⚠ Chưa có Node.js (npx)';
+    statusEl.textContent = `${bTxt}  ·  ${nTxt}`;
+    nodeBtn.classList.toggle('hidden', !!st.npxInstalled);
+    chromeBtn.textContent = st.debugPortOpen ? '✓ Chrome Debug đang chạy' : '🚀 Mở Chrome cho AI';
+  } catch (err) {
+    statusEl.textContent = `Lỗi kiểm tra: ${err.message}`;
+  }
+}
+
+async function launchDebugChromeFromUi() {
+  const btn = $('btn-launch-chrome');
+  btn.disabled = true;
+  btn.textContent = 'Đang mở Chrome…';
+  try {
+    const r = await invoke('env:launchBrowser', {});
+    if (r?.ok) {
+      toast(r.alreadyRunning ? 'Chrome Debug đã sẵn sàng trên cổng 9222.' : 'Đã mở Chrome Debug (cổng 9222)! Đang kết nối lại MCP (giữ nguyên ngữ cảnh)…', 'ok');
+      await refreshBrowserEnvStatus();
+      // Reconnect ACP with resumeSessionId so Chrome DevTools MCP attaches WITHOUT losing context!
+      await invoke('acp:connect', { force: true });
+    } else {
+      toast(r?.error || 'Không thể mở Chrome', 'err');
+    }
+  } catch (err) {
+    toast(`Lỗi mở Chrome: ${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function installNodeFromUi() {
+  const btn = $('btn-install-node');
+  btn.disabled = true;
+  btn.textContent = 'Đang cài Node.js LTS…';
+  $('env-browser-status').textContent = 'Đang tải Node.js LTS portable từ nodejs.org (~30 MB)…';
+  try {
+    const r = await invoke('env:installNode');
+    if (r?.ok) {
+      toast(`Đã cài xong Node.js ${r.version}!`, 'ok');
+      await refreshBrowserEnvStatus();
+    } else {
+      toast(r?.error || 'Cài Node.js thất bại', 'err');
+    }
+  } catch (err) {
+    toast(`Lỗi cài Node.js: ${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📦 Cài Node.js';
+  }
 }
 
 async function checkAppUpdate() {
@@ -1926,6 +2004,8 @@ async function saveSettingsFromModal(clearKey = false) {
     agyPath: $('input-agy-path').value.trim(),
     enableSandbox: $('chk-sandbox').checked,
     autoApprovePermissions: $('chk-auto-approve').checked,
+    enableBrowserMcp: $('chk-browser-mcp').checked,
+    autoLaunchDebugChrome: $('chk-auto-chrome').checked,
     theme: $('select-theme').value,
     fontSize: Number($('input-fontsize').value) || 13,
     showThinkingByDefault: $('chk-show-thinking').checked
@@ -2089,6 +2169,19 @@ function bindUIEvents() {
   });
   $('btn-install-agy').addEventListener('click', installAgyCliFromUi);
   $('btn-agy-open-settings').addEventListener('click', openSettingsModal);
+  $('btn-perm-bar-allow').addEventListener('click', () => {
+    if (!state.pendingPermKey) return;
+    const opt = state.pendingPermOptions.find((o) => (o.kind || '').includes('allow') || o.optionId === 'allow') || state.pendingPermOptions[0];
+    if (opt) resolvePermission(state.pendingPermKey, opt.optionId, false, null, opt.name);
+  });
+  $('btn-perm-bar-deny').addEventListener('click', () => {
+    if (!state.pendingPermKey) return;
+    const opt = state.pendingPermOptions.find((o) => (o.kind || '').includes('reject') || o.optionId === 'deny');
+    resolvePermission(state.pendingPermKey, opt ? opt.optionId : '', !opt, null, opt ? opt.name : 'Deny');
+  });
+  $('btn-launch-chrome').addEventListener('click', launchDebugChromeFromUi);
+  $('btn-install-node').addEventListener('click', installNodeFromUi);
+  $('btn-refresh-env').addEventListener('click', refreshBrowserEnvStatus);
 
   // Starter cards
   document.querySelectorAll('.starter-card').forEach((card) => {

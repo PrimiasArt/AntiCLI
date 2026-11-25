@@ -6,7 +6,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>AntiCLI.Server</AssemblyName>
     <RootNamespace>AntiCliServer</RootNamespace>
-    <Version>1.2.0</Version>
+    <Version>1.3.0</Version>
     <Product>AntiCLI Studio Server</Product>
     <Description>Headless Multi-Room Web &amp; WebSocket Server for Google Antigravity</Description>
   </PropertyGroup>

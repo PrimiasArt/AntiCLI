@@ -9,6 +9,7 @@ namespace AntiCliUi.Services;
 public sealed class AcpClientService : IDisposable
 {
     private readonly SettingsService _settings;
+    private readonly BrowserToolsService _browserTools;
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly SemaphoreSlim _lifecycleLock = new(1, 1);
     private readonly ConcurrentDictionary<string, TaskCompletionSource<JsonElement>> _pending = new();
@@ -21,6 +22,7 @@ public sealed class AcpClientService : IDisposable
 
     public bool IsRunning => _proc is { HasExited: false };
     public string? ActiveSessionId { get; private set; }
+    public string? LastKnownSessionId { get; private set; }
     public string ActiveWorkspace { get; private set; } = "";
     public JsonElement? AgentInfo { get; private set; }
     public JsonElement? AgentCapabilities { get; private set; }
@@ -29,18 +31,20 @@ public sealed class AcpClientService : IDisposable
 
     public event Action<string, object?>? OnBridgeEvent;
 
-    public AcpClientService(SettingsService settings)
+    public AcpClientService(SettingsService settings, BrowserToolsService? browserTools = null)
     {
         _settings = settings;
+        _browserTools = browserTools ?? new BrowserToolsService(settings);
     }
 
     private void Emit(string type, object? payload) => OnBridgeEvent?.Invoke(type, payload);
 
-    public async Task<object> ConnectAsync(string workspacePath)
+    public async Task<object> ConnectAsync(string workspacePath, string? resumeSessionId = null)
     {
         await _lifecycleLock.WaitAsync();
         try
         {
+            var prevSessionId = !string.IsNullOrWhiteSpace(resumeSessionId) ? resumeSessionId : LastKnownSessionId;
             await StopInternalAsync();
 
             ActiveWorkspace = Directory.Exists(workspacePath)
@@ -85,6 +89,8 @@ public sealed class AcpClientService : IDisposable
                 StandardOutputEncoding = Encoding.UTF8,
                 StandardErrorEncoding = Encoding.UTF8
             };
+
+            psi.Environment["PATH"] = BrowserToolsService.BuildEnhancedPathEnv();
 
             if (string.Equals(_settings.Current.AuthMode, "gemini-api-key", StringComparison.OrdinalIgnoreCase))
             {
@@ -154,7 +160,7 @@ public sealed class AcpClientService : IDisposable
                 }
             }
 
-            var sessionResult = await CreateSessionCoreAsync(ActiveWorkspace);
+            var (sessionResult, resumed) = await CreateOrResumeSessionCoreAsync(ActiveWorkspace, prevSessionId);
 
             Emit("acp:status", new
             {
@@ -164,12 +170,14 @@ public sealed class AcpClientService : IDisposable
                 authMethods = AuthMethods,
                 tier = TierInfo,
                 sessionId = ActiveSessionId,
+                resumed,
                 workspace = ActiveWorkspace
             });
 
             return new
             {
                 ok = true,
+                resumed,
                 agentInfo = AgentInfo,
                 authMethods = AuthMethods,
                 tier = TierInfo,
@@ -201,25 +209,60 @@ public sealed class AcpClientService : IDisposable
         }
     }
 
-    private async Task<JsonElement> CreateSessionCoreAsync(string cwd)
+    private async Task<(JsonElement result, bool resumed)> CreateOrResumeSessionCoreAsync(string cwd, string? resumeSessionId)
     {
-        var result = await SendRequestAsync("session/new", new
-        {
-            cwd,
-            mcpServers = Array.Empty<object>()
-        }, TimeSpan.FromSeconds(30));
+        var mcpServers = await _browserTools.BuildSessionMcpServersAsync();
 
-        if (result.TryGetProperty("sessionId", out var sid))
-            ActiveSessionId = sid.GetString();
-
-        if (result.TryGetProperty("_meta", out var meta)
-            && meta.TryGetProperty("antigravity", out var agyMeta)
-            && agyMeta.TryGetProperty("tier", out var tier))
+        if (!string.IsNullOrWhiteSpace(resumeSessionId))
         {
-            TierInfo = tier.Clone();
+            try
+            {
+                var resumedRes = await SendRequestAsync("session/resume", new
+                {
+                    sessionId = resumeSessionId,
+                    cwd,
+                    mcpServers
+                }, TimeSpan.FromSeconds(25));
+
+                ActiveSessionId = resumeSessionId;
+                LastKnownSessionId = resumeSessionId;
+                ExtractMetaAndApplyDefaults(ref resumedRes);
+                return (EnsureSessionIdField(resumedRes, resumeSessionId), true);
+            }
+            catch (Exception ex)
+            {
+                Emit("acp:log", new { direction = "err", text = $"session/resume({resumeSessionId}) fallback to new: {ex.Message}" });
+            }
         }
 
-        // Apply saved preferred defaults if present
+        JsonElement result;
+        try
+        {
+            result = await SendRequestAsync("session/new", new
+            {
+                cwd,
+                mcpServers
+            }, TimeSpan.FromSeconds(30));
+        }
+        catch when (mcpServers.Length > 0)
+        {
+            // Retry without external MCP servers so chat never breaks if npx/chrome-devtools-mcp fails
+            result = await SendRequestAsync("session/new", new
+            {
+                cwd,
+                mcpServers = Array.Empty<object>()
+            }, TimeSpan.FromSeconds(30));
+        }
+
+        if (result.TryGetProperty("sessionId", out var sid))
+        {
+            ActiveSessionId = sid.GetString();
+            LastKnownSessionId = ActiveSessionId;
+        }
+
+        ExtractMetaAndApplyDefaults(ref result);
+
+        // Apply saved preferred defaults if present on newly created sessions
         if (!string.IsNullOrEmpty(ActiveSessionId))
         {
             if (!string.IsNullOrWhiteSpace(_settings.Current.DefaultModel))
@@ -239,7 +282,29 @@ public sealed class AcpClientService : IDisposable
             }
         }
 
-        return result;
+        return (result, false);
+    }
+
+    private void ExtractMetaAndApplyDefaults(ref JsonElement result)
+    {
+        if (result.ValueKind == JsonValueKind.Object
+            && result.TryGetProperty("_meta", out var meta)
+            && meta.TryGetProperty("antigravity", out var agyMeta)
+            && agyMeta.TryGetProperty("tier", out var tier))
+        {
+            TierInfo = tier.Clone();
+        }
+    }
+
+    private static JsonElement EnsureSessionIdField(JsonElement el, string sessionId)
+    {
+        if (el.ValueKind == JsonValueKind.Object && el.TryGetProperty("sessionId", out _))
+            return el;
+        var obj = el.ValueKind == JsonValueKind.Object
+            ? JsonNode.Parse(el.GetRawText())?.AsObject() ?? new JsonObject()
+            : new JsonObject();
+        obj["sessionId"] = sessionId;
+        return JsonDocument.Parse(obj.ToJsonString()).RootElement.Clone();
     }
 
     private async Task<JsonElement> SetConfigOptionInternalAsync(string sessionId, string configId, string value, JsonElement fallback)
@@ -265,14 +330,15 @@ public sealed class AcpClientService : IDisposable
 
     public async Task<object> NewSessionAsync(string? cwd = null)
     {
-        if (!IsRunning) return await ConnectAsync(cwd ?? ActiveWorkspace);
+        LastKnownSessionId = null;
+        if (!IsRunning) return await ConnectAsync(cwd ?? ActiveWorkspace, resumeSessionId: null);
         try
         {
             var targetCwd = !string.IsNullOrWhiteSpace(cwd) && Directory.Exists(cwd)
                 ? Path.GetFullPath(cwd)
                 : ActiveWorkspace;
             ActiveWorkspace = targetCwd;
-            var res = await CreateSessionCoreAsync(targetCwd);
+            var (res, _) = await CreateOrResumeSessionCoreAsync(targetCwd, resumeSessionId: null);
             return new { ok = true, session = res, tier = TierInfo };
         }
         catch (Exception ex)
@@ -315,6 +381,7 @@ public sealed class AcpClientService : IDisposable
             }, TimeSpan.FromSeconds(30));
 
             ActiveSessionId = sessionId;
+            LastKnownSessionId = sessionId;
             return new { ok = true, sessionId, session = res };
         }
         catch (Exception ex)
@@ -330,6 +397,7 @@ public sealed class AcpClientService : IDisposable
                 }, TimeSpan.FromSeconds(20));
 
                 ActiveSessionId = sessionId;
+                LastKnownSessionId = sessionId;
                 return new { ok = true, sessionId, session = res, resumedWithoutReplay = true };
             }
             catch (Exception ex2)
@@ -381,7 +449,12 @@ public sealed class AcpClientService : IDisposable
     public async Task<object> SendPromptAsync(JsonElement promptBlocks)
     {
         if (!IsRunning || string.IsNullOrWhiteSpace(ActiveSessionId))
-            return new { ok = false, error = "ACP chưa kết nối hoặc chưa có session." };
+        {
+            // Auto-recover ACP process and resume previous conversation seamlessly!
+            var rec = await ConnectAsync(ActiveWorkspace, LastKnownSessionId);
+            if (!IsRunning || string.IsNullOrWhiteSpace(ActiveSessionId))
+                return new { ok = false, error = "ACP chưa kết nối hoặc không thể tự khôi phục phiên." };
+        }
 
         try
         {

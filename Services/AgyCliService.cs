@@ -150,8 +150,9 @@ public sealed class AgyCliService : IDisposable
     }
 
     // Persistent Stream-JSON mode (agy --input-format stream-json --output-format stream-json)
-    public async Task<object> StartStreamSessionAsync(string cwd, string? model = null, string? mode = null)
+    public async Task<object> StartStreamSessionAsync(string cwd, string? model = null, string? mode = null, string? resumeConversationId = null)
     {
+        var prevCid = resumeConversationId;
         StopStreamSession();
 
         var exe = _settings.ResolveAgyPath();
@@ -159,6 +160,7 @@ public sealed class AgyCliService : IDisposable
             return new { ok = false, error = $"Không tìm thấy agy.exe tại {exe}" };
 
         var args = new List<string> { "--input-format", "stream-json", "--output-format", "stream-json" };
+        if (!string.IsNullOrWhiteSpace(prevCid)) { args.Add("--conversation"); args.Add(prevCid); }
         if (!string.IsNullOrWhiteSpace(model)) { args.Add("--model"); args.Add(model); }
         if (!string.IsNullOrWhiteSpace(mode) && mode != "default") { args.Add("--mode"); args.Add(mode); }
         if (_settings.Current.EnableSandbox) args.Add("--sandbox");
@@ -281,6 +283,7 @@ public sealed class AgyCliService : IDisposable
             StandardOutputEncoding = Encoding.UTF8,
             StandardErrorEncoding = Encoding.UTF8
         };
+        psi.Environment["PATH"] = BrowserToolsService.BuildEnhancedPathEnv();
 
         if (string.Equals(_settings.Current.AuthMode, "gemini-api-key", StringComparison.OrdinalIgnoreCase)
             && !string.IsNullOrWhiteSpace(_settings.Current.GeminiApiKeyPlain))
