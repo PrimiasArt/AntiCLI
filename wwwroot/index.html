@@ -500,6 +500,24 @@
           </label>
         </section>
 
+        <!-- Auto-Update Section (GitHub Releases Self-Updater) -->
+        <section class="settings-section">
+          <h3>Cập nhật ứng dụng (Auto-Update)</h3>
+          <div class="sub-box">
+            <div class="row-between">
+              <div>
+                <div class="field-label">Phiên bản hiện tại: <span id="update-cur-ver" class="mono accent">v1.2.0</span> <span id="update-variant" class="muted-label"></span></div>
+                <div id="update-status-text" class="muted-label">Kiểm tra & cập nhật trực tiếp từ GitHub Releases không cần tải thủ công.</div>
+              </div>
+              <div class="btn-row">
+                <button id="btn-check-update" class="btn-ghost-sm">Kiểm tra cập nhật</button>
+                <button id="btn-apply-update" class="btn-primary-sm hidden">⬆ Cập nhật ngay</button>
+              </div>
+            </div>
+            <div id="update-notes-box" class="tool-pre hidden" style="padding:8px;background:var(--bg-1);border:1px solid var(--border);border-radius:6px;max-height:130px"></div>
+          </div>
+        </section>
+
         <!-- Server Mode: Remote Access & Security -->
         <section id="settings-server-section" class="settings-section hidden">
           <h3>4. Máy chủ từ xa & Bảo mật (Server Mode)</h3>

@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <AssemblyName>AntiCLI</AssemblyName>
     <RootNamespace>AntiCliUi</RootNamespace>
-    <Version>1.0.0</Version>
+    <Version>1.2.0</Version>
     <Product>AntiCLI Studio</Product>
     <Description>Lightweight Native Windows CLI Workbench for Google Antigravity</Description>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>

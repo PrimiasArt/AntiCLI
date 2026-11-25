@@ -43,7 +43,8 @@ app.UseWebSockets(new WebSocketOptions
 var settings = new SettingsService();
 var auth = new ServerAuthService(settings.DataDirectory, overridePassword);
 var lanUrls = DiscoverLanUrls(port);
-var roomManager = new RoomManager(settings, defaultWorkspace, lanUrls, publicUrl);
+var updater = new UpdateService(isServer: true, requestAppShutdown: () => app.Lifetime.StopApplication());
+var roomManager = new RoomManager(settings, updater, defaultWorkspace, lanUrls, publicUrl);
 
 auth.OnAllSessionsRevoked += () =>
 {
@@ -77,7 +78,7 @@ var jsonOpts = new JsonSerializerOptions
 // ============================================================================
 // Auth & Server Info REST Endpoints
 // ============================================================================
-app.MapGet("/api/health", () => Results.Ok(new { ok = true, version = "1.0.0" }));
+app.MapGet("/api/health", () => Results.Ok(new { ok = true, version = updater.CurrentVersion }));
 
 app.MapGet("/api/auth/status", (HttpContext ctx) =>
 {

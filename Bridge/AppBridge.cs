@@ -18,6 +18,7 @@ public sealed class AppBridge : IDisposable
     private readonly WorkspaceService _workspace;
     private readonly GitService _git;
     private readonly TerminalService _terminal;
+    private readonly UpdateService _updater;
     private readonly Action<string> _postJsonToUi;
     private readonly Func<string?, string?> _pickFolderOnUiThread;
     private readonly Action<string> _setWindowTitle;
@@ -27,7 +28,8 @@ public sealed class AppBridge : IDisposable
     public AppBridge(
         Action<string> postJsonToUi,
         Func<string?, string?> pickFolderOnUiThread,
-        Action<string> setWindowTitle)
+        Action<string> setWindowTitle,
+        Action? requestShutdown = null)
     {
         _postJsonToUi = postJsonToUi;
         _pickFolderOnUiThread = pickFolderOnUiThread;
@@ -39,6 +41,7 @@ public sealed class AppBridge : IDisposable
         _workspace = new WorkspaceService();
         _git = new GitService();
         _terminal = new TerminalService();
+        _updater = new UpdateService(isServer: false, requestAppShutdown: requestShutdown ?? (() => Environment.Exit(0)));
 
         _acp.OnBridgeEvent += SendEvent;
         _cli.OnBridgeEvent += SendEvent;
@@ -89,6 +92,8 @@ public sealed class AppBridge : IDisposable
                 "app:init" => await HandleAppInitAsync(),
                 "app:metrics" => GetProcessMetrics(),
                 "app:openExternal" => OpenExternal(GetStr(payload, "url")),
+                "app:checkUpdate" => await _updater.CheckForUpdateAsync(),
+                "app:applyUpdate" => await _updater.DownloadAndApplyUpdateAsync(GetStr(payload, "downloadUrl"), GetStr(payload, "version")),
 
                 "settings:get" => _settings.ToPublicDto(),
                 "settings:save" => await HandleSaveSettingsAsync(payload),
@@ -168,6 +173,7 @@ public sealed class AppBridge : IDisposable
 
         return new
         {
+            appVersion = _updater.CurrentVersion,
             workspace = CurrentWorkspace,
             workspaceName = Path.GetFileName(CurrentWorkspace.TrimEnd('\\', '/')) is { Length: > 0 } n ? n : CurrentWorkspace,
             settings = _settings.ToPublicDto(),

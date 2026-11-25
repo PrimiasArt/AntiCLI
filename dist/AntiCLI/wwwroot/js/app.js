@@ -68,6 +68,8 @@ const state = {
 
   // Server / Multi-Room Mode
   serverMode: isServerMode(),
+  appVersion: '1.2.0',
+  latestUpdateInfo: null,
   currentRoomId: localStorage.getItem('anticli_room') || 'default',
   rooms: [],
   serverInfo: null,
@@ -179,6 +181,7 @@ async function initializeWorkbenchData() {
 }
 
 async function applyInitPayload(init) {
+  if (init.appVersion) state.appVersion = init.appVersion;
   applySettingsToUi(init.settings);
   state.cli = init.cli;
   state.sessionDiffs.clear();
@@ -425,6 +428,10 @@ function bindBridgeEvents() {
   });
   on('bridge:unauthorized', (p) => {
     showAuthOverlay(p?.reason || 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi.');
+  });
+  on('server:updating', (p) => {
+    toast(`Máy chủ đang cập nhật lên v${p?.version || 'mới'} và tự khởi động lại…`, 'ok');
+    waitForServerRestartAndReload();
   });
 }
 
@@ -1772,9 +1779,112 @@ function openSettingsModal() {
   $('fontsize-val').textContent = String(s.fontSize || 13);
   $('chk-show-thinking').checked = !!s.showThinkingByDefault;
 
+  $('update-cur-ver').textContent = `v${state.appVersion || '1.2.0'}`;
   if (state.serverMode) renderServerInfoInSettings();
 
   $('settings-modal').classList.remove('hidden');
+}
+
+async function checkAppUpdate() {
+  const btn = $('btn-check-update');
+  const applyBtn = $('btn-apply-update');
+  const statusEl = $('update-status-text');
+  const notesBox = $('update-notes-box');
+
+  btn.disabled = true;
+  btn.textContent = 'Đang kiểm tra…';
+  applyBtn.classList.add('hidden');
+  notesBox.classList.add('hidden');
+  statusEl.textContent = 'Đang kết nối GitHub Releases (PrimiasArt/AntiCLI)…';
+
+  try {
+    const res = await invoke('app:checkUpdate');
+    state.latestUpdateInfo = res;
+    if (!res?.ok) {
+      statusEl.textContent = res?.error || 'Không thể kiểm tra cập nhật.';
+      return;
+    }
+
+    $('update-cur-ver').textContent = `v${res.currentVersion}`;
+    $('update-variant').textContent = res.variant ? `· ${res.variant}` : '';
+
+    if (res.hasUpdate) {
+      statusEl.innerHTML = `<strong style="color:var(--green)">Có phiên bản mới v${escapeHtml(res.latestVersion)}</strong> (${escapeHtml(res.assetName || '')}${res.assetSizeMb ? ` · ${res.assetSizeMb} MB` : ''})`;
+      if (res.canAutoInstall) {
+        applyBtn.textContent = `⬆ Cập nhật lên v${res.latestVersion}`;
+        applyBtn.classList.remove('hidden');
+      }
+      if (res.releaseNotes) {
+        notesBox.textContent = res.releaseNotes;
+        notesBox.classList.remove('hidden');
+      }
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--green)">✓ Bạn đang dùng phiên bản mới nhất (v${escapeHtml(res.latestVersion || res.currentVersion)}).</span>`;
+      if (res.canAutoInstall) {
+        applyBtn.textContent = '↻ Cài lại bản mới nhất';
+        applyBtn.classList.remove('hidden');
+      }
+    }
+  } catch (err) {
+    statusEl.textContent = `Lỗi kiểm tra cập nhật: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Kiểm tra cập nhật';
+  }
+}
+
+async function applyAppUpdate() {
+  const info = state.latestUpdateInfo;
+  const btn = $('btn-apply-update');
+  const statusEl = $('update-status-text');
+
+  btn.disabled = true;
+  btn.textContent = 'Đang tải & cài đặt…';
+  statusEl.textContent = `Đang tải gói cập nhật ${info?.assetName || ''} và giải nén tự động… (không đóng ứng dụng)`;
+
+  try {
+    const res = await invoke('app:applyUpdate', {
+      downloadUrl: info?.downloadUrl || '',
+      version: info?.latestVersion || ''
+    });
+    if (res?.ok) {
+      statusEl.innerHTML = `<strong style="color:var(--accent)">✓ Đã tải xong! Đang thay file & khởi động lại lên v${escapeHtml(res.newVersion || '')}…</strong>`;
+      toast('Đang tự động cập nhật & khởi động lại ứng dụng…', 'ok');
+      if (state.serverMode) waitForServerRestartAndReload();
+    } else {
+      statusEl.textContent = res?.error || 'Cập nhật thất bại.';
+      toast(res?.error || 'Cập nhật thất bại', 'err');
+      btn.disabled = false;
+      btn.textContent = '⬆ Thử cập nhật lại';
+    }
+  } catch (err) {
+    statusEl.textContent = `Lỗi cập nhật: ${err.message}`;
+    btn.disabled = false;
+    btn.textContent = '⬆ Thử cập nhật lại';
+  }
+}
+
+let reloadPollTimer = null;
+function waitForServerRestartAndReload() {
+  if (!state.serverMode || reloadPollTimer) return;
+  const startAt = Date.now();
+  let sawDown = false;
+  reloadPollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok && (sawDown || Date.now() - startAt > 4500)) {
+        clearInterval(reloadPollTimer);
+        reloadPollTimer = null;
+        location.reload();
+      }
+    } catch {
+      sawDown = true;
+    }
+    if (Date.now() - startAt > 45000) {
+      clearInterval(reloadPollTimer);
+      reloadPollTimer = null;
+    }
+  }, 1200);
 }
 
 function renderServerInfoInSettings() {
@@ -1857,6 +1967,7 @@ async function refreshPaletteResults(query) {
     { title: 'Kiểm tra Quota Antigravity (/usage)', sub: 'agy -p /usage', run: () => tryHandleLocalSlash('/usage') },
     { title: 'Đổi chế độ thực thi (Cycle Mode)', sub: 'Shift+Tab', run: () => cycleMode() },
     { title: 'Mở Cài đặt & Xác thực (Settings)', sub: 'Ctrl+,', run: () => openSettingsModal() },
+    { title: 'Kiểm tra cập nhật ứng dụng (Auto-Update)', sub: 'GitHub Releases', run: () => { openSettingsModal(); checkAppUpdate(); } },
     { title: 'Kết nối lại Antigravity ACP Server', sub: '/reconnect', run: () => connectAntigravity() }
   ];
 
@@ -2182,6 +2293,8 @@ function bindUIEvents() {
   });
   $('btn-settings-save').addEventListener('click', () => saveSettingsFromModal(false));
   $('btn-clear-apikey').addEventListener('click', () => saveSettingsFromModal(true));
+  $('btn-check-update').addEventListener('click', checkAppUpdate);
+  $('btn-apply-update').addEventListener('click', applyAppUpdate);
   $('btn-settings-login').addEventListener('click', () => invoke('cli:login'));
   $('btn-settings-logout').addEventListener('click', async () => {
     const r = await invoke('acp:logout');

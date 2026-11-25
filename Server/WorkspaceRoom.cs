@@ -280,6 +280,8 @@ public sealed class WorkspaceRoom : IDisposable
             "app:init" => await HandleInitAsync(manager),
             "app:metrics" => GetProcessMetrics(),
             "app:openExternal" => new { ok = true, clientOpen = true },
+            "app:checkUpdate" => await manager.Updater.CheckForUpdateAsync(),
+            "app:applyUpdate" => await HandleApplyUpdateAsync(manager, GetStr(payload, "downloadUrl"), GetStr(payload, "version")),
 
             "settings:get" => _settings.ToPublicDto(),
             "settings:save" => await HandleSaveSettingsAsync(payload),
@@ -341,6 +343,7 @@ public sealed class WorkspaceRoom : IDisposable
         return new
         {
             isServerMode = true,
+            appVersion = manager.Updater.CurrentVersion,
             workspace = CurrentWorkspace,
             workspaceName = GetFolderName(CurrentWorkspace),
             settings = _settings.ToPublicDto(),
@@ -617,6 +620,13 @@ public sealed class WorkspaceRoom : IDisposable
         return new { ok = true, settings = _settings.ToPublicDto(), reconnected = needReconnect, reconnectResult };
     }
 
+    private async Task<object> HandleApplyUpdateAsync(RoomManager manager, string downloadUrl, string version)
+    {
+        manager.BroadcastAll("server:updating", new { version });
+        var res = await manager.Updater.DownloadAndApplyUpdateAsync(downloadUrl, version);
+        return res;
+    }
+
     private object StartTerminal()
     {
         if (!_terminal.IsRunning) _terminal.Start(CurrentWorkspace);
@@ -675,9 +685,12 @@ public sealed class RoomManager : IDisposable
     private readonly ConcurrentDictionary<string, ClientSocket> _allClients = new();
     private int _roomSeq = 1;
 
-    public RoomManager(SettingsService settings, string defaultWorkspace, string[] lanUrls, string publicUrl)
+    public UpdateService Updater { get; }
+
+    public RoomManager(SettingsService settings, UpdateService updater, string defaultWorkspace, string[] lanUrls, string publicUrl)
     {
         _settings = settings;
+        Updater = updater;
         _defaultWorkspace = Directory.Exists(defaultWorkspace)
             ? Path.GetFullPath(defaultWorkspace)
             : (Directory.Exists(settings.Current.LastWorkspace)
@@ -773,6 +786,19 @@ public sealed class RoomManager : IDisposable
     {
         foreach (var c in _allClients.Values.ToArray())
             await c.CloseSafeAsync(reason);
+    }
+
+    public void BroadcastAll(string eventName, object? payload)
+    {
+        var json = JsonSerializer.Serialize(new
+        {
+            kind = "event",
+            @event = eventName,
+            payload
+        }, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+        foreach (var c in _allClients.Values)
+            _ = c.SendRawJsonAsync(json);
     }
 
     private void BroadcastRoomsList()

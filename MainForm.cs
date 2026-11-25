@@ -91,6 +91,12 @@ public sealed class MainForm : Form
                     if (IsDisposed) return;
                     if (InvokeRequired) BeginInvoke(() => Text = title);
                     else Text = title;
+                },
+                requestShutdown: () =>
+                {
+                    if (IsDisposed) return;
+                    if (InvokeRequired) BeginInvoke(() => Close());
+                    else Close();
                 });
 
             core.WebMessageReceived += (_, args) =>
