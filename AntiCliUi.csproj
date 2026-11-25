@@ -21,6 +21,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Compile Remove="Server\**" />
+    <Content Remove="Server\**" />
+    <None Remove="Server\**" />
+    <EmbeddedResource Remove="Server\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="wwwroot\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

@@ -1,7 +1,11 @@
 bin/
 obj/
+Server/bin/
+Server/obj/
 dist/*.zip
 dist/portable/
+dist/portable-desktop/
+dist/portable-server/
 .vs/
 *.user
 *.suo

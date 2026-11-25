@@ -139,6 +139,58 @@ public sealed class WorkspaceService : IDisposable
         return new { ok = true, relativePath = relativePath.Replace('\\', '/'), entries };
     }
 
+    public object BrowseHostDirectories(string? path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                var drives = DriveInfo.GetDrives()
+                    .Where(d => d.IsReady)
+                    .Select(d => new
+                    {
+                        name = string.IsNullOrWhiteSpace(d.VolumeLabel) ? d.Name : $"{d.Name} ({d.VolumeLabel})",
+                        fullPath = d.RootDirectory.FullName,
+                        isDrive = true
+                    })
+                    .ToArray();
+
+                var quick = new List<object>();
+                var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                if (Directory.Exists(profile)) quick.Add(new { name = "User Home", fullPath = profile });
+                var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+                if (Directory.Exists(docs)) quick.Add(new { name = "Documents", fullPath = docs });
+                var desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+                if (Directory.Exists(desktop)) quick.Add(new { name = "Desktop", fullPath = desktop });
+
+                return new { ok = true, currentPath = "", parentPath = "", quick, entries = drives };
+            }
+
+            var full = Path.GetFullPath(path);
+            if (!Directory.Exists(full))
+                return new { ok = false, error = $"Thư mục không tồn tại: {path}" };
+
+            var parent = Directory.GetParent(full)?.FullName ?? "";
+            var dirs = new List<object>();
+            foreach (var d in new DirectoryInfo(full).EnumerateDirectories().OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                if ((d.Attributes & FileAttributes.System) != 0) continue;
+                dirs.Add(new
+                {
+                    name = d.Name,
+                    fullPath = d.FullName,
+                    isDrive = false
+                });
+            }
+
+            return new { ok = true, currentPath = full, parentPath = parent, quick = Array.Empty<object>(), entries = dirs };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, error = ex.Message };
+        }
+    }
+
     public object SearchFiles(string rootPath, string query, int maxResults = 40)
     {
         if (string.IsNullOrWhiteSpace(rootPath) || !Directory.Exists(rootPath))

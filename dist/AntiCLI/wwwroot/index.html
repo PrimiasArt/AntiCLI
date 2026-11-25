@@ -18,6 +18,29 @@
 
         <div class="divider-v"></div>
 
+        <!-- Room Switcher (Server Mode: Shared Sync + Isolated Rooms) -->
+        <div id="room-picker-wrap" class="workspace-picker-wrap hidden">
+          <button id="btn-room-menu" class="pill-btn room-pill" title="Chuyển giữa Room Dùng Chung & Room Độc Lập">
+            <span id="room-mode-dot" class="room-mode-dot shared"></span>
+            <span id="room-name" class="truncate">Shared Room #1</span>
+            <span id="room-clients-badge" class="room-clients-badge mono">1</span>
+            <svg class="ic ic-xs" viewBox="0 0 16 16"><path fill="currentColor" d="M4.427 6.427a.75.75 0 0 1 1.06 0L8 8.94l2.513-2.513a.75.75 0 1 1 1.06 1.06l-3.043 3.044a.75.75 0 0 1-1.06 0L4.427 7.487a.75.75 0 0 1 0-1.06Z"/></svg>
+          </button>
+          <div id="room-dropdown" class="dropdown-menu hidden" style="width:340px">
+            <button id="btn-create-isolated-room" class="dropdown-item accent">
+              <span>⚡ + Tạo Room Độc Lập (Isolated)</span>
+              <span class="muted-label">ACP riêng</span>
+            </button>
+            <button id="btn-create-shared-room" class="dropdown-item">
+              <span>🤝 + Tạo Room Dùng Chung (Shared)</span>
+              <span class="muted-label">Đồng bộ</span>
+            </button>
+            <div class="dropdown-sep"></div>
+            <div class="dropdown-label">Các Room đang hoạt động trên máy chủ</div>
+            <div id="rooms-dropdown-list"></div>
+          </div>
+        </div>
+
         <div class="workspace-picker-wrap">
           <button id="btn-workspace-menu" class="pill-btn workspace-pill" title="Chuyển hoặc mở thư mục dự án (Ctrl+O)">
             <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M1.75 2.5A1.25 1.25 0 0 0 .5 3.75v8.5c0 .69.56 1.25 1.25 1.25h12.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H7.81L6.47 3.03A1.25 1.25 0 0 0 5.53 2.5H1.75Z"/></svg>
@@ -464,11 +487,99 @@
             <span>Mặc định mở rộng khung suy luận (Thinking trace)</span>
           </label>
         </section>
+
+        <!-- Server Mode: Remote Access & Security -->
+        <section id="settings-server-section" class="settings-section hidden">
+          <h3>4. Máy chủ từ xa & Bảo mật (Server Mode)</h3>
+          <div class="sub-box">
+            <div class="row-between">
+              <div>
+                <div class="field-label">Địa chỉ truy cập trên mạng (LAN / VPN / Tunnel)</div>
+                <div id="server-urls-list" class="server-urls-list mono"></div>
+              </div>
+            </div>
+            <div class="dropdown-sep"></div>
+            <div class="field-grid-2">
+              <div class="field-group">
+                <label class="field-label" for="input-cur-pwd">Mật khẩu hiện tại</label>
+                <input id="input-cur-pwd" class="text-input" type="password" placeholder="Nhập mật khẩu đang dùng" />
+              </div>
+              <div class="field-group">
+                <label class="field-label" for="input-new-pwd">Mật khẩu mới (tối thiểu 6 ký tự)</label>
+                <input id="input-new-pwd" class="text-input" type="password" placeholder="Mật khẩu mới…" />
+              </div>
+            </div>
+            <div class="row-between">
+              <label class="toggle-row">
+                <input id="chk-revoke-others" type="checkbox" checked />
+                <span>Đăng xuất tất cả thiết bị khác sau khi đổi mật khẩu</span>
+              </label>
+              <button id="btn-change-pwd" class="btn-primary-sm">Đổi mật khẩu</button>
+            </div>
+            <div class="dropdown-sep"></div>
+            <div class="row-between">
+              <span class="muted-label">Quản lý phiên đăng nhập trên các máy khác</span>
+              <div class="btn-row">
+                <button id="btn-server-logout" class="btn-ghost-sm">Đăng xuất máy này</button>
+                <button id="btn-server-revoke-all" class="btn-danger-sm">Thu hồi mọi phiên</button>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
 
       <div class="settings-footer">
         <button id="btn-settings-cancel" class="btn-ghost">Hủy</button>
         <button id="btn-settings-save" class="btn-primary">Lưu & Áp dụng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Remote Host Directory Browser Modal (Server Mode) -->
+  <div id="folder-modal" class="modal-backdrop hidden">
+    <div class="settings-dialog" style="width:620px;max-height:76vh">
+      <div class="settings-header">
+        <div>
+          <h2>📂 Chọn thư mục dự án trên máy chủ</h2>
+          <p class="muted-label">Duyệt trực tiếp ổ đĩa & thư mục của máy chủ từ trình duyệt</p>
+        </div>
+        <button id="btn-close-folder" class="icon-btn">✕</button>
+      </div>
+      <div class="folder-nav-bar">
+        <button id="btn-folder-drives" class="chip-btn" title="Danh sách ổ đĩa">💻 Ổ đĩa</button>
+        <button id="btn-folder-up" class="chip-btn" title="Lên thư mục cha">⬆ Lên</button>
+        <input id="input-folder-path" class="mini-input mono" type="text" placeholder="Nhập đường dẫn (vd: C:\Projects) rồi Enter…" />
+        <button id="btn-folder-go" class="chip-btn">Đi tới</button>
+      </div>
+      <div id="folder-quick-strip" class="folder-quick-strip hidden"></div>
+      <div id="folder-list" class="folder-list"></div>
+      <div class="settings-footer">
+        <span id="folder-selected-preview" class="muted-label mono truncate" style="flex:1;text-align:left"></span>
+        <button id="btn-folder-cancel" class="btn-ghost">Hủy</button>
+        <button id="btn-folder-select" class="btn-primary">Mở thư mục này</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Server Mode Login Lock Overlay -->
+  <div id="auth-overlay" class="auth-overlay hidden">
+    <div class="auth-card">
+      <div class="auth-logo">
+        <span class="brand-glyph">&gt;_</span>
+        <span>AntiCLI Studio Server</span>
+      </div>
+      <p id="auth-host-label" class="auth-sub">Nhập mật khẩu truy cập máy chủ để bắt đầu lập trình từ xa với Antigravity.</p>
+      <form id="auth-form" class="auth-form">
+        <input id="auth-password-input" class="text-input mono" type="password" placeholder="Mật khẩu truy cập máy chủ…" autocomplete="current-password" required />
+        <label class="toggle-row">
+          <input id="auth-remember" type="checkbox" checked />
+          <span>Ghi nhớ đăng nhập trên thiết bị này (14 ngày)</span>
+        </label>
+        <div id="auth-error" class="auth-error hidden"></div>
+        <button id="btn-auth-submit" type="submit" class="btn-primary" style="width:100%;height:36px">Mở khóa & Kết nối</button>
+      </form>
+      <div class="auth-foot muted-label">
+        Mật khẩu khởi tạo được hiển thị trong cửa sổ dòng lệnh <code>AntiCLI.Server</code> trên máy chủ.
       </div>
     </div>
   </div>

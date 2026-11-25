@@ -1,7 +1,8 @@
-﻿# AntiCLI Studio — Build & Publish Script
+﻿# AntiCLI Studio — Unified Build & Publish Script (Desktop + Headless Web Server)
 param(
-    [switch]$SelfContained,
-    [string]$OutDir = ""
+    [ValidateSet("All", "Desktop", "Server")]
+    [string]$Target = "All",
+    [switch]$SelfContained
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,27 +14,36 @@ if (-not (Test-Path $dotnet)) {
     throw "Không tìm thấy dotnet CLI. Hãy cài .NET 8 SDK trước."
 }
 
-if (-not $OutDir) {
-    $OutDir = if ($SelfContained) { Join-Path $PSScriptRoot "dist\portable" } else { Join-Path $PSScriptRoot "dist\AntiCLI" }
+function Publish-Project($csproj, $outDir, $isSelfContained) {
+    if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+    Write-Host "Building $csproj → $outDir ..." -ForegroundColor Cyan
+
+    if ($isSelfContained) {
+        & $dotnet publish $csproj `
+            -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:DebugType=none -p:DebugSymbols=false `
+            -o $outDir
+    } else {
+        & $dotnet publish $csproj `
+            -c Release -r win-x64 --self-contained false `
+            -p:PublishSingleFile=true `
+            -p:DebugType=none -p:DebugSymbols=false `
+            -o $outDir
+    }
+    if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed (exit $LASTEXITCODE)" }
+
+    Get-ChildItem $outDir -Filter "*.xml" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 }
-if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
-Write-Host "Building AntiCLI Studio → $OutDir ..." -ForegroundColor Cyan
 
-if ($SelfContained) {
-    & $dotnet publish (Join-Path $PSScriptRoot "AntiCliUi.csproj") `
-        -c Release -r win-x64 --self-contained true `
-        -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true `
-        -p:DebugType=none -p:DebugSymbols=false `
-        -o $OutDir
-} else {
-    & $dotnet publish (Join-Path $PSScriptRoot "AntiCliUi.csproj") `
-        -c Release -r win-x64 --self-contained false `
-        -p:PublishSingleFile=true `
-        -p:DebugType=none -p:DebugSymbols=false `
-        -o $OutDir
+if ($Target -eq "All" -or $Target -eq "Desktop") {
+    $deskOut = if ($SelfContained) { Join-Path $PSScriptRoot "dist\portable-desktop" } else { Join-Path $PSScriptRoot "dist\AntiCLI" }
+    Publish-Project (Join-Path $PSScriptRoot "AntiCliUi.csproj") $deskOut $SelfContained
+    Write-Host "✅ Desktop: $deskOut\AntiCLI.exe" -ForegroundColor Green
 }
 
-# Remove unused IntelliSense XML doc files from output
-Get-ChildItem $OutDir -Filter "*.xml" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
-
-Write-Host "✅ Hoàn tất! Chạy file: $OutDir\AntiCLI.exe" -ForegroundColor Green
+if ($Target -eq "All" -or $Target -eq "Server") {
+    $srvOut = if ($SelfContained) { Join-Path $PSScriptRoot "dist\portable-server" } else { Join-Path $PSScriptRoot "dist\AntiCLI-Server" }
+    Publish-Project (Join-Path $PSScriptRoot "Server\AntiCliServer.csproj") $srvOut $SelfContained
+    Write-Host "✅ Web Server: $srvOut\AntiCLI.Server.exe" -ForegroundColor Green
+}

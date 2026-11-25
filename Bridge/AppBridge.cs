@@ -94,6 +94,7 @@ public sealed class AppBridge : IDisposable
                 "settings:save" => await HandleSaveSettingsAsync(payload),
 
                 "workspace:pick" => await HandlePickWorkspaceAsync(),
+                "workspace:browseHost" => _workspace.BrowseHostDirectories(GetStr(payload, "path")),
                 "workspace:open" => await HandleOpenWorkspaceAsync(GetStr(payload, "path")),
                 "workspace:listDir" => _workspace.ListDirectory(
                     CurrentWorkspace,

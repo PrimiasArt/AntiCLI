@@ -1,4 +1,14 @@
-import { invoke, on } from './bridge.js';
+import {
+  invoke,
+  on,
+  isServerMode,
+  checkServerAuth,
+  loginServer,
+  logoutServer,
+  changeServerPassword,
+  revokeAllServerSessions,
+  connectWebSocket
+} from './bridge.js';
 import {
   escapeHtml,
   renderLineNumberedCode,
@@ -56,6 +66,14 @@ const state = {
   paletteItems: [],
   paletteIdx: 0,
 
+  // Server / Multi-Room Mode
+  serverMode: isServerMode(),
+  currentRoomId: localStorage.getItem('anticli_room') || 'default',
+  rooms: [],
+  serverInfo: null,
+  folderBrowsePath: '',
+  folderBrowseParent: '',
+
   // Auto-scroll
   autoScroll: true
 };
@@ -86,26 +104,155 @@ async function boot() {
   bindBridgeEvents();
   setupResizers();
 
-  try {
-    const init = await invoke('app:init');
-    applySettingsToUi(init.settings);
-    state.cli = init.cli;
-    updateWorkspaceUi(init.workspace, init.workspaceName, init.git, init.tree);
-    updateMetricsUi(init.metrics);
-
-    // Connect to Antigravity immediately
-    await connectAntigravity();
-  } catch (err) {
-    toast(`Lỗi khởi tạo: ${err.message}`, 'err');
+  // Start with sidebar collapsed on narrow mobile viewports
+  if (window.innerWidth <= 720) {
+    $('sidebar').classList.add('hidden');
+    $('resizer-left').classList.add('hidden');
+    $('btn-toggle-sidebar').classList.remove('active');
   }
 
-  // Periodic lightweight RAM metric update (every 8s)
-  setInterval(async () => {
+  if (state.serverMode) {
+    $('room-picker-wrap').classList.remove('hidden');
+    $('settings-server-section').classList.remove('hidden');
+    try {
+      const authStatus = await checkServerAuth();
+      if (authStatus.machineName) {
+        $('auth-host-label').textContent = `Máy chủ: ${authStatus.machineName} — nhập mật khẩu để mở khóa phiên lập trình từ xa.`;
+      }
+      if (!authStatus.authenticated) {
+        showAuthOverlay();
+        return;
+      }
+      await startServerWorkbench();
+    } catch (err) {
+      showAuthOverlay(`Không thể kiểm tra máy chủ: ${err.message}`);
+    }
+    return;
+  }
+
+  await initializeWorkbenchData();
+  startMetricsPolling();
+}
+
+let metricsTimer = null;
+function startMetricsPolling() {
+  if (metricsTimer) return;
+  metricsTimer = setInterval(async () => {
     try {
       const m = await invoke('app:metrics');
       updateMetricsUi(m);
     } catch {}
   }, 8000);
+}
+
+function showAuthOverlay(errorMsg = '') {
+  $('auth-overlay').classList.remove('hidden');
+  const errEl = $('auth-error');
+  if (errorMsg) {
+    errEl.textContent = errorMsg;
+    errEl.classList.remove('hidden');
+  } else {
+    errEl.classList.add('hidden');
+  }
+  setTimeout(() => $('auth-password-input').focus(), 40);
+}
+
+async function startServerWorkbench() {
+  $('auth-overlay').classList.add('hidden');
+  try {
+    setConnStatus('connecting', 'Đang nối WebSocket…');
+    await connectWebSocket(state.currentRoomId || 'default');
+    await initializeWorkbenchData();
+    startMetricsPolling();
+  } catch (err) {
+    toast(`Lỗi kết nối Server: ${err.message}`, 'err');
+  }
+}
+
+async function initializeWorkbenchData() {
+  try {
+    const init = await invoke('app:init');
+    await applyInitPayload(init);
+  } catch (err) {
+    toast(`Lỗi khởi tạo: ${err.message}`, 'err');
+  }
+}
+
+async function applyInitPayload(init) {
+  applySettingsToUi(init.settings);
+  state.cli = init.cli;
+  state.sessionDiffs.clear();
+  updateWorkspaceUi(init.workspace, init.workspaceName, init.git, init.tree);
+  updateMetricsUi(init.metrics);
+
+  if (init.serverInfo) state.serverInfo = init.serverInfo;
+  if (Array.isArray(init.rooms)) {
+    state.rooms = init.rooms;
+    renderRoomsUi();
+  }
+
+  if (init.roomSnapshot) {
+    hydrateRoomSnapshot(init.roomSnapshot);
+    // Connect ACP lazily if this room hasn't started ACP yet
+    if (init.roomSnapshot.connState !== 'connected') {
+      await connectAntigravity();
+    } else {
+      await refreshSessions();
+    }
+  } else {
+    await connectAntigravity();
+  }
+}
+
+function hydrateRoomSnapshot(snap) {
+  clearTimeline();
+  if (!snap) return;
+
+  if (snap.room?.id) {
+    state.currentRoomId = snap.room.id;
+    try { localStorage.setItem('anticli_room', snap.room.id); } catch {}
+    renderRoomsUi();
+  }
+  if (snap.sessionId) {
+    state.sessionId = snap.sessionId;
+    $('session-id-pill').textContent = snap.sessionId.slice(0, 8);
+    $('session-id-pill').classList.remove('hidden');
+  }
+  state.sessionTitle = snap.sessionTitle || 'Phiên mới';
+  $('session-title').textContent = state.sessionTitle;
+
+  if (snap.tier?.name) showTierBadge(snap.tier.name);
+  if (Array.isArray(snap.configOptions)) applyConfigOptions(snap.configOptions);
+  if (Array.isArray(snap.availableCommands)) state.availableCommands = snap.availableCommands;
+  updateContextMeter(snap.ctxUsed || 0, snap.ctxSize || 1048576);
+  setBusy(!!snap.busy);
+
+  if (snap.connState) setConnStatus(snap.connState, snap.connLabel || snap.connState);
+
+  // Replay buffered room history so late-joining devices see live shared session immediately
+  if (Array.isArray(snap.replay) && snap.replay.length > 0) {
+    for (const ev of snap.replay) {
+      replaySingleEvent(ev.event, ev.payload);
+    }
+    scrollToBottom(true);
+  }
+}
+
+function replaySingleEvent(eventName, payload) {
+  if (eventName === 'room:user_message') {
+    state.activeTurn = null;
+    appendUserBubble(payload?.text || '', []);
+  } else if (eventName === 'acp:update') {
+    handleAcpSessionUpdate(payload);
+  } else if (eventName === 'acp:permission_request') {
+    handlePermissionRequest(payload);
+  } else if (eventName === 'room:permission_resolved') {
+    markPermissionCardResolved(payload?.requestKey, payload?.optionId, payload?.cancelled);
+  } else if (eventName === 'room:turn_done') {
+    finalizeActiveTurn(payload?.usage || null, payload?.error || null);
+  } else if (eventName === 'stream:event') {
+    handleStreamJsonEvent(payload);
+  }
 }
 
 async function connectAntigravity() {
@@ -196,6 +343,54 @@ function bindBridgeEvents() {
   on('terminal:output', (p) => appendTerminalOutput(p.text, p.stream === 'stderr'));
   on('terminal:status', (p) => {
     $('terminal-cwd').textContent = p?.cwd || state.workspace;
+  });
+
+  // Server Multi-Room Live Sync & Auth Events
+  on('room:user_message', (p) => {
+    state.activeTurn = null;
+    appendUserBubble(p?.text || '', []);
+  });
+  on('room:busy', (p) => setBusy(!!p?.busy));
+  on('room:permission_resolved', (p) => markPermissionCardResolved(p?.requestKey, p?.optionId, p?.cancelled));
+  on('room:turn_done', (p) => {
+    finalizeActiveTurn(p?.usage || null, p?.error || null);
+    setBusy(false);
+    refreshGitStatus();
+  });
+  on('room:cleared', (p) => {
+    clearTimeline();
+    state.sessionTitle = 'Phiên mới';
+    $('session-title').textContent = state.sessionTitle;
+    $('plan-bar').classList.add('hidden');
+    updateContextMeter(0, 1048576);
+    if (p?.session) applySessionPayload(p.session, p.tier);
+  });
+  on('room:workspace_changed', (p) => {
+    if (!p) return;
+    applySettingsToUi(p.settings);
+    state.sessionDiffs.clear();
+    clearTimeline();
+    updateWorkspaceUi(p.workspace, p.workspaceName, p.git, p.tree);
+    if (p.connection?.ok && p.connection.session) applySessionPayload(p.connection.session, p.connection.tier);
+  });
+  on('room:config_updated', (p) => {
+    if (Array.isArray(p?.configOptions)) applyConfigOptions(p.configOptions);
+  });
+  on('server:rooms', (p) => {
+    if (Array.isArray(p?.rooms)) state.rooms = p.rooms;
+    if (p?.serverInfo) state.serverInfo = p.serverInfo;
+    renderRoomsUi();
+  });
+  on('bridge:disconnected', () => {
+    setConnStatus('connecting', 'Đang kết nối lại…');
+  });
+  on('bridge:connected', () => {
+    if (state.serverMode && state.connState === 'connecting') {
+      initializeWorkbenchData();
+    }
+  });
+  on('bridge:unauthorized', (p) => {
+    showAuthOverlay(p?.reason || 'Phiên đăng nhập đã hết hạn hoặc bị thu hồi.');
   });
 }
 
@@ -440,12 +635,22 @@ async function resolvePermission(requestKey, optionId, cancelled, cardEl, chosen
   }
   try {
     await invoke('acp:respondPermission', { requestKey, optionId: optionId || '', cancelled: !!cancelled });
-    if (cardEl) {
-      cardEl.classList.add('resolved');
-      cardEl.querySelector('.perm-actions').innerHTML = `<span class="muted-label mono">Đã chọn: ${escapeHtml(chosenLabel || (cancelled ? 'Cancelled' : optionId))}</span>`;
-    }
+    markPermissionCardResolved(requestKey, chosenLabel || optionId, cancelled, cardEl);
   } catch (err) {
     toast(`Lỗi phản hồi quyền: ${err.message}`, 'err');
+  }
+}
+
+function markPermissionCardResolved(requestKey, label, cancelled, explicitCard = null) {
+  if (state.pendingPermKey === requestKey) {
+    state.pendingPermKey = null;
+    state.pendingPermOptions = [];
+  }
+  const card = explicitCard || document.querySelector(`.perm-card[data-request-key="${requestKey}"]`);
+  if (card && !card.classList.contains('resolved')) {
+    card.classList.add('resolved');
+    const act = card.querySelector('.perm-actions');
+    if (act) act.innerHTML = `<span class="muted-label mono">Đã chọn: ${escapeHtml(cancelled ? 'Cancelled' : (label || 'OK'))}</span>`;
   }
 }
 
@@ -709,7 +914,9 @@ function wireCodeBlockActions(container) {
   container.querySelectorAll('.ext-link').forEach((a) => {
     a.addEventListener('click', (e) => {
       e.preventDefault();
-      invoke('app:openExternal', { url: a.dataset.url || a.href });
+      const url = a.dataset.url || a.href;
+      if (state.serverMode) window.open(url, '_blank', 'noopener');
+      else invoke('app:openExternal', { url });
     });
   });
 }
@@ -797,7 +1004,7 @@ async function submitComposer() {
   }
 
   try {
-    const res = await invoke('acp:prompt', { blocks, plainText: plainCombined });
+    const res = await invoke('acp:prompt', { blocks, plainText: plainCombined, displayText: raw || '(Đính kèm tệp/hình ảnh)' });
     if (state.settings?.transportMode !== 'stream-json') {
       if (res?.ok) {
         const usage = res.result?.usage || null;
@@ -1531,7 +1738,32 @@ function openSettingsModal() {
   $('fontsize-val').textContent = String(s.fontSize || 13);
   $('chk-show-thinking').checked = !!s.showThinkingByDefault;
 
+  if (state.serverMode) renderServerInfoInSettings();
+
   $('settings-modal').classList.remove('hidden');
+}
+
+function renderServerInfoInSettings() {
+  const list = $('server-urls-list');
+  const urls = [];
+  if (state.serverInfo?.publicUrl) urls.push({ label: 'HTTPS Public', url: state.serverInfo.publicUrl });
+  for (const u of (state.serverInfo?.lanUrls || [location.origin])) {
+    urls.push({ label: u.includes('localhost') ? 'Local' : 'LAN / VPN', url: u });
+  }
+  list.innerHTML = urls.map((item) => `
+    <div class="server-url-row">
+      <span class="truncate">${escapeHtml(item.label)}: ${escapeHtml(item.url)}</span>
+      <button class="chip-btn copy-url-btn" data-url="${escapeHtml(item.url)}">Copy</button>
+    </div>
+  `).join('');
+  list.querySelectorAll('.copy-url-btn').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.url || '');
+        toast('Đã copy địa chỉ truy cập!', 'ok');
+      } catch {}
+    });
+  });
 }
 
 function updateAuthBoxes(mode) {
@@ -1641,9 +1873,26 @@ function bindUIEvents() {
   // Topbar
   $('btn-workspace-menu').addEventListener('click', (e) => {
     e.stopPropagation();
+    $('room-dropdown').classList.add('hidden');
     $('workspace-dropdown').classList.toggle('hidden');
   });
-  document.addEventListener('click', () => $('workspace-dropdown').classList.add('hidden'));
+  $('btn-room-menu').addEventListener('click', (e) => {
+    e.stopPropagation();
+    $('workspace-dropdown').classList.add('hidden');
+    $('room-dropdown').classList.toggle('hidden');
+  });
+  document.addEventListener('click', () => {
+    $('workspace-dropdown').classList.add('hidden');
+    $('room-dropdown').classList.add('hidden');
+  });
+  $('btn-create-isolated-room').addEventListener('click', () => {
+    $('room-dropdown').classList.add('hidden');
+    createRoom(false);
+  });
+  $('btn-create-shared-room').addEventListener('click', () => {
+    $('room-dropdown').classList.add('hidden');
+    createRoom(true);
+  });
   $('btn-open-folder').addEventListener('click', () => {
     $('workspace-dropdown').classList.add('hidden');
     pickWorkspace();
@@ -1903,6 +2152,75 @@ function bindUIEvents() {
     toast(r?.ok ? 'Đã đăng xuất khỏi Antigravity.' : (r?.error || 'Lỗi đăng xuất'), r?.ok ? 'ok' : 'err');
   });
 
+  // Server Mode Auth Overlay & Security Controls
+  $('auth-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const pwd = $('auth-password-input').value;
+    const remember = $('auth-remember').checked;
+    const btn = $('btn-auth-submit');
+    btn.disabled = true;
+    btn.textContent = 'Đang xác thực…';
+    $('auth-error').classList.add('hidden');
+    try {
+      const res = await loginServer(pwd, remember);
+      if (res?.ok) {
+        $('auth-password-input').value = '';
+        await startServerWorkbench();
+      } else {
+        $('auth-error').textContent = res?.error || 'Đăng nhập thất bại.';
+        $('auth-error').classList.remove('hidden');
+      }
+    } catch (err) {
+      $('auth-error').textContent = `Lỗi kết nối: ${err.message}`;
+      $('auth-error').classList.remove('hidden');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Mở khóa & Kết nối';
+    }
+  });
+
+  $('btn-change-pwd').addEventListener('click', async () => {
+    const cur = $('input-cur-pwd').value;
+    const next = $('input-new-pwd').value;
+    const rev = $('chk-revoke-others').checked;
+    const res = await changeServerPassword(cur, next, rev);
+    if (res?.ok) {
+      $('input-cur-pwd').value = '';
+      $('input-new-pwd').value = '';
+      toast('Đã đổi mật khẩu máy chủ thành công!', 'ok');
+    } else {
+      toast(res?.error || 'Không thể đổi mật khẩu', 'err');
+    }
+  });
+
+  $('btn-server-logout').addEventListener('click', async () => {
+    await logoutServer();
+    $('settings-modal').classList.add('hidden');
+    showAuthOverlay('Đã đăng xuất khỏi máy chủ.');
+  });
+
+  $('btn-server-revoke-all').addEventListener('click', async () => {
+    await revokeAllServerSessions();
+    $('settings-modal').classList.add('hidden');
+    showAuthOverlay('Đã thu hồi tất cả phiên đăng nhập trên mọi thiết bị.');
+  });
+
+  // Remote Host Directory Browser Modal
+  $('btn-close-folder').addEventListener('click', () => $('folder-modal').classList.add('hidden'));
+  $('btn-folder-cancel').addEventListener('click', () => $('folder-modal').classList.add('hidden'));
+  $('btn-folder-drives').addEventListener('click', () => browseRemoteHostFolder(''));
+  $('btn-folder-up').addEventListener('click', () => browseRemoteHostFolder(state.folderBrowseParent || ''));
+  $('btn-folder-go').addEventListener('click', () => browseRemoteHostFolder($('input-folder-path').value.trim()));
+  $('input-folder-path').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') browseRemoteHostFolder($('input-folder-path').value.trim());
+  });
+  $('btn-folder-select').addEventListener('click', async () => {
+    const target = state.folderBrowsePath || $('input-folder-path').value.trim();
+    if (!target) { toast('Hãy chọn một thư mục cụ thể.', 'err'); return; }
+    $('folder-modal').classList.add('hidden');
+    await openWorkspace(target);
+  });
+
   // Command Palette Modal
   $('cmd-palette-modal').addEventListener('click', (e) => {
     if (e.target === $('cmd-palette-modal')) $('cmd-palette-modal').classList.add('hidden');
@@ -1948,6 +2266,7 @@ function bindUIEvents() {
     if (e.key === 'Escape') {
       if (!$('cmd-palette-modal').classList.contains('hidden')) { $('cmd-palette-modal').classList.add('hidden'); return; }
       if (!$('settings-modal').classList.contains('hidden')) { $('settings-modal').classList.add('hidden'); return; }
+      if (!$('folder-modal').classList.contains('hidden')) { $('folder-modal').classList.add('hidden'); return; }
       if (state.busy) { await invoke('acp:cancel'); toast('Đã hủy turn hiện tại.'); }
       return;
     }
@@ -1971,7 +2290,15 @@ function bindUIEvents() {
 }
 
 async function pickWorkspace() {
+  if (state.serverMode) {
+    openRemoteFolderBrowser(state.workspace);
+    return;
+  }
   const res = await invoke('workspace:pick');
+  if (res?.remoteBrowseRequired) {
+    openRemoteFolderBrowser(res.currentPath || state.workspace);
+    return;
+  }
   if (res?.ok) {
     applySettingsToUi(res.settings);
     state.sessionDiffs.clear();
@@ -1982,6 +2309,164 @@ async function pickWorkspace() {
     }
     await refreshSessions();
     toast(`Đã mở workspace: ${res.workspaceName}`, 'ok');
+  }
+}
+
+// ============================================================================
+// Server Mode: Multi-Room Manager & Remote Host Folder Browser
+// ============================================================================
+function renderRoomsUi() {
+  if (!state.serverMode) return;
+  const cur = state.rooms.find((r) => r.id === state.currentRoomId) || state.rooms[0];
+  if (cur) {
+    $('room-name').textContent = cur.name;
+    $('room-clients-badge').textContent = String(cur.clientCount || 1);
+    $('room-mode-dot').className = `room-mode-dot ${cur.isShared ? 'shared' : 'isolated'}`;
+  }
+
+  const list = $('rooms-dropdown-list');
+  if (!state.rooms.length) {
+    list.innerHTML = '<div class="muted-label" style="padding:6px 9px">Chưa có Room nào</div>';
+    return;
+  }
+
+  list.innerHTML = state.rooms.map((r) => {
+    const active = r.id === state.currentRoomId;
+    const tag = r.isShared ? 'SHARED' : 'ISOLATED';
+    const delBtn = r.id !== 'default'
+      ? `<button class="icon-btn xs del-room-btn" data-del-room="${escapeHtml(r.id)}" title="Đóng Room & giải phóng RAM">✕</button>`
+      : '';
+    return `
+      <div class="room-list-row${active ? ' active' : ''}" data-join-room="${escapeHtml(r.id)}">
+        <span class="room-mode-dot ${r.isShared ? 'shared' : 'isolated'}"></span>
+        <div class="room-list-main">
+          <div class="room-list-title">
+            <span class="truncate">${escapeHtml(r.name)}</span>
+            <span class="room-type-tag">${tag}</span>
+            <span class="room-clients-badge mono">${r.clientCount || 0}</span>
+          </div>
+          <div class="room-list-sub truncate mono">${escapeHtml(r.workspaceName || r.workspace)} · ${escapeHtml(r.sessionTitle || 'Phiên mới')}</div>
+        </div>
+        ${delBtn}
+      </div>
+    `;
+  }).join('');
+
+  list.querySelectorAll('[data-join-room]').forEach((row) => {
+    row.addEventListener('click', () => {
+      $('room-dropdown').classList.add('hidden');
+      const id = row.dataset.joinRoom;
+      if (id && id !== state.currentRoomId) switchRoom(id);
+    });
+  });
+
+  list.querySelectorAll('[data-del-room]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteRoom(btn.dataset.delRoom);
+    });
+  });
+}
+
+async function createRoom(isShared) {
+  toast(isShared ? 'Đang tạo Shared Room mới…' : 'Đang tạo Room Độc Lập mới…');
+  try {
+    const res = await invoke('room:create', { isShared, workspace: state.workspace });
+    if (res?.ok && res.init) {
+      state.currentRoomId = res.room.id;
+      try { localStorage.setItem('anticli_room', res.room.id); } catch {}
+      await applyInitPayload(res.init);
+      toast(`Đã chuyển sang ${res.room.name}`, 'ok');
+    }
+  } catch (err) {
+    toast(`Lỗi tạo Room: ${err.message}`, 'err');
+  }
+}
+
+async function switchRoom(roomId) {
+  toast('Đang chuyển Room…');
+  try {
+    const res = await invoke('room:join', { roomId });
+    if (res?.ok && res.init) {
+      state.currentRoomId = roomId;
+      try { localStorage.setItem('anticli_room', roomId); } catch {}
+      await applyInitPayload(res.init);
+      toast(`Đã tham gia ${res.room.name}`, 'ok');
+    }
+  } catch (err) {
+    toast(`Lỗi chuyển Room: ${err.message}`, 'err');
+  }
+}
+
+async function deleteRoom(roomId) {
+  try {
+    const res = await invoke('room:delete', { roomId });
+    if (res?.ok) {
+      if (Array.isArray(res.rooms)) state.rooms = res.rooms;
+      if (res.switchedToDefault && res.init) {
+        state.currentRoomId = 'default';
+        try { localStorage.setItem('anticli_room', 'default'); } catch {}
+        await applyInitPayload(res.init);
+      } else {
+        renderRoomsUi();
+      }
+      toast('Đã đóng Room và giải phóng tiến trình ACP.', 'ok');
+    } else {
+      toast(res?.error || 'Không thể xóa Room', 'err');
+    }
+  } catch (err) {
+    toast(`Lỗi xóa Room: ${err.message}`, 'err');
+  }
+}
+
+function openRemoteFolderBrowser(initialPath) {
+  $('folder-modal').classList.remove('hidden');
+  browseRemoteHostFolder(initialPath || '');
+}
+
+async function browseRemoteHostFolder(path) {
+  const list = $('folder-list');
+  list.innerHTML = '<div class="empty-state">Đang đọc thư mục máy chủ…</div>';
+  try {
+    const res = await invoke('workspace:browseHost', { path: path || '' });
+    if (!res?.ok) {
+      list.innerHTML = `<div class="empty-state">${escapeHtml(res?.error || 'Không thể đọc thư mục')}</div>`;
+      return;
+    }
+    state.folderBrowsePath = res.currentPath || '';
+    state.folderBrowseParent = res.parentPath || '';
+    $('input-folder-path').value = state.folderBrowsePath;
+    $('folder-selected-preview').textContent = state.folderBrowsePath || 'Chọn một ổ đĩa hoặc thư mục';
+
+    const quickStrip = $('folder-quick-strip');
+    if (Array.isArray(res.quick) && res.quick.length) {
+      quickStrip.classList.remove('hidden');
+      quickStrip.innerHTML = res.quick.map((q) =>
+        `<button class="chip-btn" data-qpath="${escapeHtml(q.fullPath)}">★ ${escapeHtml(q.name)}</button>`
+      ).join('');
+      quickStrip.querySelectorAll('[data-qpath]').forEach((b) => {
+        b.addEventListener('click', () => browseRemoteHostFolder(b.dataset.qpath));
+      });
+    } else {
+      quickStrip.classList.add('hidden');
+    }
+
+    const entries = res.entries || [];
+    if (!entries.length) {
+      list.innerHTML = '<div class="empty-state">Thư mục này không có thư mục con (bấm "Mở thư mục này" để chọn).</div>';
+      return;
+    }
+    list.innerHTML = entries.map((d) => `
+      <div class="folder-row" data-fpath="${escapeHtml(d.fullPath)}">
+        <span>${d.isDrive ? '💽' : '📁'}</span>
+        <span class="truncate mono">${escapeHtml(d.name)}</span>
+      </div>
+    `).join('');
+    list.querySelectorAll('[data-fpath]').forEach((row) => {
+      row.addEventListener('click', () => browseRemoteHostFolder(row.dataset.fpath));
+    });
+  } catch (err) {
+    list.innerHTML = `<div class="empty-state">Lỗi: ${escapeHtml(err.message)}</div>`;
   }
 }
 
