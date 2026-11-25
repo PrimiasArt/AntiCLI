@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<html lang="vi" data-theme="obsidian-cyan">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AntiCLI Studio</title>
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <!-- Top Command Bar -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <div class="brand" title="AntiCLI Studio — Antigravity Native CLI Workbench">
+          <span class="brand-glyph">&gt;_</span>
+          <span class="brand-name">AntiCLI</span>
+        </div>
+
+        <div class="divider-v"></div>
+
+        <div class="workspace-picker-wrap">
+          <button id="btn-workspace-menu" class="pill-btn workspace-pill" title="Chuyển hoặc mở thư mục dự án (Ctrl+O)">
+            <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M1.75 2.5A1.25 1.25 0 0 0 .5 3.75v8.5c0 .69.56 1.25 1.25 1.25h12.5c.69 0 1.25-.56 1.25-1.25v-6.5c0-.69-.56-1.25-1.25-1.25H7.81L6.47 3.03A1.25 1.25 0 0 0 5.53 2.5H1.75Z"/></svg>
+            <span id="workspace-name" class="truncate">Loading…</span>
+            <svg class="ic ic-xs" viewBox="0 0 16 16"><path fill="currentColor" d="M4.427 6.427a.75.75 0 0 1 1.06 0L8 8.94l2.513-2.513a.75.75 0 1 1 1.06 1.06l-3.043 3.044a.75.75 0 0 1-1.06 0L4.427 7.487a.75.75 0 0 1 0-1.06Z"/></svg>
+          </button>
+          <div id="workspace-dropdown" class="dropdown-menu hidden">
+            <button id="btn-open-folder" class="dropdown-item accent">
+              <span>📂 Mở thư mục dự án khác…</span>
+              <kbd>Ctrl+O</kbd>
+            </button>
+            <div class="dropdown-sep"></div>
+            <div class="dropdown-label">Dự án gần đây</div>
+            <div id="recent-workspaces-list"></div>
+          </div>
+        </div>
+
+        <span id="git-branch-badge" class="meta-badge hidden" title="Nhánh Git hiện tại">
+          <svg class="ic ic-xs" viewBox="0 0 16 16"><path fill="currentColor" d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Z"/></svg>
+          <span id="git-branch-name">main</span>
+        </span>
+      </div>
+
+      <div class="topbar-center">
+        <button id="btn-cmd-palette" class="cmd-trigger" title="Mở Command Palette (Ctrl+K)">
+          <svg class="ic ic-xs" viewBox="0 0 16 16"><path fill="currentColor" d="M10.68 11.74a6 6 0 0 1-7.922-8.982 6 6 0 0 1 8.982 7.922l3.04 3.04a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215ZM11.5 7a4.499 4.499 0 1 0-8.997 0A4.499 4.499 0 0 0 11.5 7Z"/></svg>
+          <span>Tìm lệnh, file, session…</span>
+          <kbd>Ctrl+K</kbd>
+        </button>
+      </div>
+
+      <div class="topbar-right">
+        <button id="btn-conn-status" class="status-pill" title="Trạng thái kết nối Antigravity (Click để kết nối lại)">
+          <span id="conn-dot" class="status-dot connecting"></span>
+          <span id="conn-label">Đang kết nối…</span>
+        </button>
+
+        <span id="tier-badge" class="tier-badge hidden" title="Gói Antigravity đang dùng"></span>
+        <span id="ram-badge" class="meta-badge mono" title="Bộ nhớ tiến trình gốc (Native Host)">-- MB</span>
+
+        <div class="divider-v"></div>
+
+        <button id="btn-toggle-sidebar" class="icon-btn active" title="Bật/tắt Sidebar trái (Ctrl+B)">
+          <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M2 2.75C2 1.784 2.784 1 3.75 1h8.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25ZM3.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25H6V2.5Zm3.75 0v11h4.75a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>
+        </button>
+        <button id="btn-toggle-terminal" class="icon-btn" title="Bật/tắt Terminal PowerShell (Ctrl+J)">
+          <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M0 2.75C0 1.784.784 1 1.75 1h12.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 14.25 15H1.75A1.75 1.75 0 0 1 0 13.25Zm1.75-.25a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25ZM7.25 8a.749.749 0 0 1-.22.53l-2.25 2.25a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734L5.44 8 3.72 6.28a.749.749 0 0 1 .326-1.275.749.749 0 0 1 .734.215l2.25 2.25c.141.14.22.331.22.53Zm1.5 1.5h3a.75.75 0 0 1 0 1.5h-3a.75.75 0 0 1 0-1.5Z"/></svg>
+        </button>
+        <button id="btn-toggle-inspector" class="icon-btn" title="Bật/tắt Inspector Code/Diff/Wire (Ctrl+\)">
+          <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M2 2.75C2 1.784 2.784 1 3.75 1h8.5c.966 0 1.75.784 1.75 1.75v10.5A1.75 1.75 0 0 1 12.25 15h-8.5A1.75 1.75 0 0 1 2 13.25ZM3.75 2.5a.25.25 0 0 0-.25.25v10.5c0 .138.112.25.25.25H8.5V2.5Zm6.25 0v11h2.25a.25.25 0 0 0 .25-.25V2.75a.25.25 0 0 0-.25-.25Z"/></svg>
+        </button>
+        <button id="btn-settings" class="icon-btn" title="Cài đặt & Xác thực (Ctrl+,)">
+          <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M8 0a8.2 8.2 0 0 1 .701.031C9.444.095 9.99.645 10.16 1.29l.288 1.107c.018.066.079.158.212.224.231.114.454.243.668.386.123.082.233.09.299.071l1.103-.303c.644-.176 1.392.021 1.82.63.27.385.506.792.704 1.218.315.675.111 1.422-.364 1.891l-.814.806c-.049.048-.098.147-.088.294.016.257.016.515 0 .772-.01.147.038.246.088.294l.814.806c.475.469.679 1.216.364 1.891a7.977 7.977 0 0 1-.704 1.217c-.428.61-1.176.807-1.82.63l-1.102-.302c-.067-.019-.177-.011-.3.071a5.909 5.909 0 0 1-.668.386c-.133.066-.194.158-.211.224l-.29 1.106c-.168.646-.715 1.196-1.458 1.26a8.006 8.006 0 0 1-1.402 0c-.743-.064-1.289-.614-1.458-1.26l-.289-1.106c-.018-.066-.079-.158-.212-.224a5.738 5.738 0 0 1-.668-.386c-.123-.082-.233-.09-.299-.071l-1.103.303c-.644.176-1.392-.021-1.82-.63a8.12 8.12 0 0 1-.704-1.218c-.315-.675-.111-1.422.363-1.891l.815-.806c.05-.048.098-.147.088-.294a6.214 6.214 0 0 1 0-.772c.01-.147-.038-.246-.088-.294l-.815-.806C.635 6.045.431 5.298.746 4.623a7.92 7.92 0 0 1 .704-1.217c.428-.61 1.176-.807 1.82-.63l1.102.302c.067.019.177.011.3-.071.214-.143.437-.272.668-.386.133-.066.194-.158.211-.224l.29-1.106C6.009.645 6.556.095 7.299.03 7.53.01 7.764 0 8 0Zm-.571 1.525c-.036.003-.108.036-.137.146l-.289 1.105c-.147.561-.549.967-.998 1.189-.173.086-.34.183-.5.29-.417.278-.97.423-1.529.27l-1.103-.303c-.109-.03-.175.016-.195.045-.22.312-.412.644-.573.99-.014.031-.021.11.059.19l.815.806c.411.406.562.957.53 1.456a4.709 4.709 0 0 0 0 .582c.032.499-.119 1.05-.53 1.456l-.815.806c-.081.08-.073.159-.059.19.162.346.353.677.573.989.02.03.085.076.195.046l1.102-.303c.56-.153 1.113-.008 1.53.27.161.107.328.204.501.29.447.222.85.629.997 1.189l.289 1.105c.029.109.101.143.137.146a6.6 6.6 0 0 0 1.142 0c.036-.003.108-.036.137-.146l.289-1.105c.147-.561.549-.967.998-1.189.173-.086.34-.183.5-.29.417-.278.97-.423 1.529-.27l1.103.303c.109.029.175-.016.195-.045.22-.313.411-.644.573-.99.014-.031.021-.11-.059-.19l-.815-.806c-.411-.406-.562-.957-.53-1.456a4.709 4.709 0 0 0 0-.582c-.032-.499.119-1.05.53-1.456l.815-.806c.081-.08.073-.159.059-.19a6.464 6.464 0 0 0-.573-.989c-.02-.03-.085-.076-.195-.046l-1.102.303c-.56.153-1.113.008-1.53-.27a4.44 4.44 0 0 0-.501-.29c-.447-.222-.85-.629-.997-1.189l-.289-1.105c-.029-.11-.101-.143-.137-.146a6.6 6.6 0 0 0-1.142 0ZM11 8a3 3 0 1 1-6 0 3 3 0 0 1 6 0ZM9.5 8a1.5 1.5 0 1 0-3.001.001A1.5 1.5 0 0 0 9.5 8Z"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Workbench Body -->
+    <div class="workbench">
+      <!-- Left Sidebar -->
+      <aside id="sidebar" class="sidebar">
+        <div class="pane-tabs">
+          <button class="pane-tab active" data-sidebar-tab="files">Files</button>
+          <button class="pane-tab" data-sidebar-tab="sessions">Sessions</button>
+          <button class="pane-tab" data-sidebar-tab="changes">
+            Changes <span id="changes-count" class="count-pill hidden">0</span>
+          </button>
+        </div>
+
+        <!-- Files Tab -->
+        <div id="sidebar-files" class="sidebar-panel active">
+          <div class="sidebar-toolbar">
+            <input id="file-filter-input" class="mini-input" type="text" placeholder="Lọc tệp trong workspace…" />
+            <button id="btn-refresh-files" class="icon-btn xs" title="Làm mới cây thư mục">↻</button>
+          </div>
+          <div id="file-tree" class="file-tree"></div>
+        </div>
+
+        <!-- Sessions Tab -->
+        <div id="sidebar-sessions" class="sidebar-panel">
+          <div class="sidebar-toolbar">
+            <button id="btn-new-session-side" class="btn-primary-sm full">+ Phiên mới (Ctrl+N)</button>
+            <button id="btn-refresh-sessions" class="icon-btn xs" title="Tải lại danh sách phiên">↻</button>
+          </div>
+          <div id="sessions-list" class="sessions-list"></div>
+        </div>
+
+        <!-- Changes Tab -->
+        <div id="sidebar-changes" class="sidebar-panel">
+          <div class="sidebar-toolbar">
+            <span id="changes-subtitle" class="muted-label">Thay đổi trong phiên & Git</span>
+            <button id="btn-refresh-changes" class="icon-btn xs" title="Làm mới Git status">↻</button>
+          </div>
+          <div id="changes-list" class="changes-list"></div>
+        </div>
+      </aside>
+
+      <div id="resizer-left" class="resizer-v"></div>
+
+      <!-- Center CLI & Agent Stream + Bottom Terminal -->
+      <main class="center-column">
+        <div class="session-bar">
+          <div class="session-bar-left">
+            <span class="session-dot"></span>
+            <span id="session-title" class="session-title">Phiên mới</span>
+            <span id="session-id-pill" class="session-id-pill mono hidden"></span>
+          </div>
+          <div class="session-bar-right">
+            <button id="btn-quick-usage" class="chip-btn" title="Xem quota & sử dụng Antigravity (/usage)">/usage</button>
+            <button id="btn-quick-clear" class="chip-btn" title="Tạo phiên mới sạch (Ctrl+N)">+ New</button>
+          </div>
+        </div>
+
+        <!-- Active Plan Bar (hidden until agent sends plan updates) -->
+        <div id="plan-bar" class="plan-bar hidden">
+          <div class="plan-header">
+            <span class="plan-title">📋 Kế hoạch thực thi</span>
+            <button id="btn-close-plan" class="icon-btn xs">✕</button>
+          </div>
+          <div id="plan-items" class="plan-items"></div>
+        </div>
+
+        <!-- Auth Required Banner -->
+        <div id="auth-banner" class="auth-banner hidden">
+          <div class="auth-banner-text">
+            <strong>Cần xác thực Antigravity</strong>
+            <span id="auth-banner-msg">Đăng nhập bằng tài khoản Google cá nhân hoặc nhập Gemini API Key trong Settings.</span>
+          </div>
+          <div class="auth-banner-actions">
+            <button id="btn-auth-google" class="btn-primary-sm">Đăng nhập Google</button>
+            <button id="btn-auth-terminal" class="btn-ghost-sm">Login qua Terminal</button>
+            <button id="btn-auth-settings" class="btn-ghost-sm">Dùng API Key</button>
+          </div>
+        </div>
+
+        <!-- Main Stream Timeline -->
+        <div id="stream-scroll" class="stream-scroll">
+          <div id="welcome-view" class="welcome-view">
+            <div class="welcome-badge">ANTIGRAVITY NATIVE CLI WORKBENCH</div>
+            <h1 class="welcome-title"><span class="accent">&gt;_</span> Sẵn sàng lập trình cùng Antigravity</h1>
+            <p class="welcome-sub">
+              Giao tiếp trực tiếp qua <code>agy acp</code> — duyệt quyền thực thi trực quan, xem Diff tức thì, đính kèm <code>@file</code> hoặc dán ảnh màn hình <code>Ctrl+V</code>.
+            </p>
+            <div class="starter-grid">
+              <button class="starter-card" data-prompt="Khảo sát cấu trúc dự án hiện tại và tóm tắt các thành phần chính.">
+                <div class="starter-ic">🧭</div>
+                <div class="starter-title">Khảo sát dự án</div>
+                <div class="starter-desc">Phân tích kiến trúc, thư mục & stack hiện có</div>
+              </button>
+              <button class="starter-card" data-prompt="/plan ">
+                <div class="starter-ic">📐</div>
+                <div class="starter-title">Lập kế hoạch (/plan)</div>
+                <div class="starter-desc">Thiết kế từng bước trước khi chỉnh sửa mã nguồn</div>
+              </button>
+              <button class="starter-card" data-prompt="Kiểm tra lỗi, bug tiềm ẩn và đề xuất cải thiện hiệu năng trong dự án.">
+                <div class="starter-ic">🔍</div>
+                <div class="starter-title">Review & Debug</div>
+                <div class="starter-desc">Rà soát code, tìm bug và tối ưu hóa</div>
+              </button>
+              <button class="starter-card" data-slash="/usage">
+                <div class="starter-ic">⚡</div>
+                <div class="starter-title">Kiểm tra Quota (/usage)</div>
+                <div class="starter-desc">Xem hạn mức model Antigravity hiện tại</div>
+              </button>
+            </div>
+            <div class="shortcut-strip">
+              <span><kbd>Enter</kbd> Gửi</span>
+              <span><kbd>Shift+Enter</kbd> Xuống dòng</span>
+              <span><kbd>Shift+Tab</kbd> Đổi Mode</span>
+              <span><kbd>/</kbd> Slash Commands</span>
+              <span><kbd>@</kbd> Đính kèm File</span>
+              <span><kbd>Ctrl+J</kbd> Terminal</span>
+              <span><kbd>Ctrl+K</kbd> Palette</span>
+            </div>
+          </div>
+
+          <div id="stream-timeline" class="stream-timeline"></div>
+        </div>
+
+        <button id="btn-scroll-bottom" class="scroll-bottom-btn hidden" title="Cuộn xuống cuối">↓ Mới nhất</button>
+
+        <!-- CLI Composer Dock -->
+        <div class="composer-dock">
+          <!-- Autocomplete Popup -->
+          <div id="autocomplete-popup" class="autocomplete-popup hidden"></div>
+
+          <!-- Attachments Strip -->
+          <div id="attachments-strip" class="attachments-strip hidden"></div>
+
+          <!-- Prompt Box -->
+          <div class="composer-box">
+            <div class="prompt-gutter" id="prompt-gutter">&gt;</div>
+            <textarea
+              id="prompt-input"
+              class="prompt-input"
+              rows="1"
+              placeholder="Nhập lệnh lập trình, gõ / cho slash command, @ để gắn tệp, hoặc Ctrl+V dán ảnh…"
+              spellcheck="false"
+            ></textarea>
+            <div class="composer-actions">
+              <button id="btn-attach-file" class="icon-btn sm" title="Đính kèm tệp (@)">@</button>
+              <button id="btn-send" class="send-btn" title="Gửi lệnh (Enter)">
+                <svg class="ic" viewBox="0 0 16 16"><path fill="currentColor" d="M1.592 2.712 2.38 7.25h4.87a.75.75 0 1 1 0 1.5H2.38l-.788 4.538L13.929 8ZM.989 8 0 2.307A1 1 0 0 1 1.448 1.24l13.94 6.135a.68.68 0 0 1 0 1.25L1.448 14.76A1 1 0 0 1 0 13.693Z"/></svg>
+              </button>
+              <button id="btn-stop" class="stop-btn hidden" title="Dừng turn hiện tại (Esc)">
+                <svg class="ic" viewBox="0 0 16 16"><rect x="3" y="3" width="10" height="10" rx="2" fill="currentColor"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <!-- Live Control Footer -->
+          <div class="composer-footer">
+            <div class="footer-controls">
+              <div class="select-wrap" title="Chọn Model Antigravity">
+                <span class="select-tag">Model</span>
+                <select id="select-model" class="mini-select">
+                  <option value="">Đang tải…</option>
+                </select>
+              </div>
+              <div class="select-wrap" title="Mức suy luận (Thinking Level)">
+                <span class="select-tag">Think</span>
+                <select id="select-thought" class="mini-select">
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div class="select-wrap" title="Chế độ thực thi (Shift+Tab để đổi nhanh)">
+                <span class="select-tag">Mode</span>
+                <select id="select-mode" class="mini-select mode-select">
+                  <option value="default">Default</option>
+                  <option value="accept-edits">Accept Edits</option>
+                  <option value="plan">Plan</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="footer-telemetry">
+              <div id="ctx-meter" class="ctx-meter" title="Ngữ cảnh đã dùng / Context Window">
+                <span id="ctx-label" class="mono">0 / 1M</span>
+                <div class="ctx-bar"><div id="ctx-fill" class="ctx-fill" style="width: 0%"></div></div>
+              </div>
+              <span id="transport-pill" class="transport-pill mono">ACP</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Bottom Resizable Integrated Terminal -->
+        <div id="resizer-terminal" class="resizer-h hidden"></div>
+        <section id="terminal-pane" class="terminal-pane hidden">
+          <div class="terminal-header">
+            <div class="terminal-header-left">
+              <span class="term-dot"></span>
+              <span class="terminal-title">PowerShell</span>
+              <span id="terminal-cwd" class="terminal-cwd mono truncate"></span>
+            </div>
+            <div class="terminal-header-right">
+              <button id="btn-term-clear" class="chip-btn">Clear</button>
+              <button id="btn-term-restart" class="chip-btn">Restart</button>
+              <button id="btn-term-close" class="icon-btn xs" title="Đóng Terminal (Ctrl+J)">✕</button>
+            </div>
+          </div>
+          <div id="terminal-output" class="terminal-output mono"></div>
+          <div class="terminal-input-row">
+            <span class="term-prompt mono">PS&gt;</span>
+            <input id="terminal-input" class="terminal-input mono" type="text" placeholder="Nhập lệnh PowerShell và nhấn Enter…" spellcheck="false" autocomplete="off" />
+          </div>
+        </section>
+      </main>
+
+      <div id="resizer-right" class="resizer-v hidden"></div>
+
+      <!-- Right Inspector Panel -->
+      <aside id="inspector-pane" class="inspector-pane hidden">
+        <div class="pane-tabs">
+          <button class="pane-tab active" data-inspector-tab="code">Code</button>
+          <button class="pane-tab" data-inspector-tab="diff">Diff</button>
+          <button class="pane-tab" data-inspector-tab="wire">Wire</button>
+          <div class="pane-tabs-spacer"></div>
+          <button id="btn-close-inspector" class="icon-btn xs" title="Ẩn Inspector (Ctrl+\)">✕</button>
+        </div>
+
+        <!-- Code Viewer / Editor Tab -->
+        <div id="inspector-code" class="inspector-tab-body active">
+          <div class="inspector-toolbar">
+            <span id="code-filepath" class="filepath mono truncate">Chưa chọn tệp</span>
+            <div class="inspector-actions">
+              <button id="btn-code-mention" class="chip-btn hidden" title="Đính kèm tệp này vào prompt">@ Gắn</button>
+              <button id="btn-code-edit" class="chip-btn hidden" title="Chuyển chế độ sửa trực tiếp">Sửa</button>
+              <button id="btn-code-save" class="btn-primary-xs hidden" title="Lưu thay đổi (Ctrl+S)">Lưu</button>
+            </div>
+          </div>
+          <div id="code-view-container" class="code-view-container">
+            <div class="empty-state">Chọn một tệp từ Sidebar <strong>Files</strong> hoặc nhấn <kbd>Ctrl+P</kbd> để xem mã nguồn.</div>
+          </div>
+          <textarea id="code-editor-textarea" class="code-editor-textarea mono hidden" spellcheck="false"></textarea>
+        </div>
+
+        <!-- Diff Viewer Tab -->
+        <div id="inspector-diff" class="inspector-tab-body">
+          <div class="inspector-toolbar">
+            <span id="diff-filepath" class="filepath mono truncate">Chưa có Diff</span>
+            <div class="inspector-actions">
+              <span id="diff-stats" class="diff-stats mono"></span>
+              <button id="btn-diff-mode" class="chip-btn" title="Chuyển Unified / Split">Unified</button>
+            </div>
+          </div>
+          <div id="diff-view-container" class="diff-view-container mono">
+            <div class="empty-state">Mọi chỉnh sửa tệp từ Antigravity hoặc Git Diff sẽ hiển thị chi tiết tại đây.</div>
+          </div>
+        </div>
+
+        <!-- ACP / CLI Wire Log Tab -->
+        <div id="inspector-wire" class="inspector-tab-body">
+          <div class="inspector-toolbar">
+            <span class="filepath">ACP / CLI Wire Inspector</span>
+            <div class="inspector-actions">
+              <button id="btn-wire-clear" class="chip-btn">Clear</button>
+            </div>
+          </div>
+          <div id="wire-log" class="wire-log mono"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <!-- Command Palette Modal -->
+  <div id="cmd-palette-modal" class="modal-backdrop hidden">
+    <div class="palette-dialog">
+      <div class="palette-input-row">
+        <span class="palette-icon">&gt;</span>
+        <input id="palette-input" class="palette-input" type="text" placeholder="Gõ lệnh hoặc tên tệp (ví dụ: model, terminal, diff, settings…)" autocomplete="off" spellcheck="false" />
+        <kbd>Esc</kbd>
+      </div>
+      <div id="palette-results" class="palette-results"></div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-backdrop hidden">
+    <div class="settings-dialog">
+      <div class="settings-header">
+        <div>
+          <h2>Cài đặt AntiCLI Studio</h2>
+          <p class="muted-label">Kết nối Antigravity, nguồn xác thực & giao diện lập trình</p>
+        </div>
+        <button id="btn-close-settings" class="icon-btn">✕</button>
+      </div>
+
+      <div class="settings-body">
+        <section class="settings-section">
+          <h3>1. Nguồn xác thực Antigravity</h3>
+          <div class="radio-cards">
+            <label class="radio-card">
+              <input type="radio" name="authMode" value="antigravity" checked />
+              <div class="radio-card-body">
+                <strong>Tài khoản Antigravity cá nhân (Mặc định)</strong>
+                <span>Dùng chung đăng nhập Google với Antigravity App & CLI, dùng trực tiếp gói cá nhân.</span>
+              </div>
+            </label>
+            <label class="radio-card">
+              <input type="radio" name="authMode" value="gemini-api-key" />
+              <div class="radio-card-body">
+                <strong>Gemini API Key (Tùy chọn / Dự phòng)</strong>
+                <span>Kết nối bằng khóa API từ Google AI Studio. Khóa được mã hóa cục bộ bằng Windows DPAPI.</span>
+              </div>
+            </label>
+          </div>
+
+          <div id="auth-antigravity-box" class="sub-box">
+            <div class="row-between">
+              <div>
+                <div class="field-label">Trạng thái CLI</div>
+                <div id="settings-cli-status" class="mono muted-label">Đang kiểm tra agy.exe…</div>
+              </div>
+              <div class="btn-row">
+                <button id="btn-settings-login" class="btn-ghost-sm">Đăng nhập lại (Terminal)</button>
+                <button id="btn-settings-logout" class="btn-danger-sm">Đăng xuất</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="auth-apikey-box" class="sub-box hidden">
+            <div class="field-group">
+              <label class="field-label" for="input-gemini-key">Gemini API Key</label>
+              <div class="input-row">
+                <input id="input-gemini-key" class="text-input mono" type="password" placeholder="AIzaSy… (để trống nếu giữ nguyên key đã lưu)" autocomplete="off" />
+                <button id="btn-clear-apikey" class="btn-danger-sm hidden">Xóa key</button>
+              </div>
+              <div id="apikey-saved-hint" class="field-hint"></div>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="input-gemini-base">Custom Endpoint (tùy chọn — GOOGLE_GEMINI_BASE_URL)</label>
+              <input id="input-gemini-base" class="text-input mono" type="text" placeholder="Để trống để dùng endpoint chính thức mặc định" />
+            </div>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>2. Kết nối & Chế độ thực thi</h3>
+          <div class="field-grid-2">
+            <div class="field-group">
+              <label class="field-label" for="select-transport">Giao thức kết nối</label>
+              <select id="select-transport" class="text-input">
+                <option value="acp">ACP Interactive (Khuyến nghị — Diff, Duyệt quyền, Resume)</option>
+                <option value="stream-json">Stream-JSON CLI (Chế độ dòng lệnh headless)</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="input-agy-path">Đường dẫn agy.exe (để trống = tự động tìm)</label>
+              <input id="input-agy-path" class="text-input mono" type="text" placeholder="Tự động nhận diện %LOCALAPPDATA%\agy\bin\agy.exe" />
+            </div>
+          </div>
+
+          <div class="toggle-list">
+            <label class="toggle-row">
+              <input id="chk-sandbox" type="checkbox" />
+              <span>Bật Terminal Sandbox (<code>--sandbox</code>) để cô lập lệnh shell</span>
+            </label>
+            <label class="toggle-row">
+              <input id="chk-auto-approve" type="checkbox" />
+              <span>Tự động duyệt mọi tool không hỏi (<code>--dangerously-skip-permissions</code> — chỉ dùng khi tin tưởng hoàn toàn)</span>
+            </label>
+          </div>
+        </section>
+
+        <section class="settings-section">
+          <h3>3. Giao diện & Trải nghiệm</h3>
+          <div class="field-grid-2">
+            <div class="field-group">
+              <label class="field-label" for="select-theme">Bảng màu (Theme)</label>
+              <select id="select-theme" class="text-input">
+                <option value="obsidian-cyan">Obsidian Cyan (Mặc định)</option>
+                <option value="tokyo-night">Tokyo Night</option>
+                <option value="emerald-matrix">Emerald Terminal</option>
+                <option value="amber-phosphor">Amber Phosphor</option>
+              </select>
+            </div>
+            <div class="field-group">
+              <label class="field-label" for="input-fontsize">Cỡ chữ Code & Stream (<span id="fontsize-val">13</span>px)</label>
+              <input id="input-fontsize" type="range" min="11" max="17" step="1" value="13" />
+            </div>
+          </div>
+          <label class="toggle-row">
+            <input id="chk-show-thinking" type="checkbox" />
+            <span>Mặc định mở rộng khung suy luận (Thinking trace)</span>
+          </label>
+        </section>
+      </div>
+
+      <div class="settings-footer">
+        <button id="btn-settings-cancel" class="btn-ghost">Hủy</button>
+        <button id="btn-settings-save" class="btn-primary">Lưu & Áp dụng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Stack -->
+  <div id="toast-stack" class="toast-stack"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
