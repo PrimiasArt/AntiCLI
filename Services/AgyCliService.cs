@@ -99,6 +99,56 @@ public sealed class AgyCliService : IDisposable
         }
     }
 
+    public async Task<object> InstallAgyCliAsync()
+    {
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -ExecutionPolicy Bypass -Command \"irm https://antigravity.google/cli/install.ps1 | iex\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                StandardOutputEncoding = Encoding.UTF8,
+                StandardErrorEncoding = Encoding.UTF8
+            };
+
+            using var proc = new Process { StartInfo = psi };
+            proc.Start();
+            var outTask = proc.StandardOutput.ReadToEndAsync();
+            var errTask = proc.StandardError.ReadToEndAsync();
+
+            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+            await proc.WaitForExitAsync(cts.Token);
+
+            var stdout = await outTask;
+            var stderr = await errTask;
+            var resolved = _settings.ResolveAgyPath();
+            var installed = File.Exists(resolved);
+            var ver = "";
+            if (installed)
+            {
+                var (vc, vo, _) = await RunOneShotAsync(resolved, "--version", Environment.CurrentDirectory, 10000);
+                if (vc == 0) ver = vo.Trim();
+            }
+
+            return new
+            {
+                ok = installed,
+                installed,
+                path = resolved,
+                version = ver,
+                output = (stdout + "\n" + stderr).Trim()
+            };
+        }
+        catch (Exception ex)
+        {
+            return new { ok = false, installed = false, error = ex.Message };
+        }
+    }
+
     // Persistent Stream-JSON mode (agy --input-format stream-json --output-format stream-json)
     public async Task<object> StartStreamSessionAsync(string cwd, string? model = null, string? mode = null)
     {

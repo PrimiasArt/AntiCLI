@@ -128,6 +128,7 @@ public sealed class AppBridge : IDisposable
                 "acp:logout" => await _acp.LogoutAsync(),
 
                 "cli:info" => await _cli.GetCliInfoAsync(),
+                "cli:install" => await _cli.InstallAgyCliAsync(),
                 "cli:models" => await _cli.ListModelsAsync(CurrentWorkspace),
                 "cli:slashReport" => await _cli.RunSlashReportAsync(GetStr(payload, "command"), CurrentWorkspace),
                 "cli:login" => _cli.LaunchInteractiveLogin(),

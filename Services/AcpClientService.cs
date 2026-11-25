@@ -52,10 +52,15 @@ public sealed class AcpClientService : IDisposable
             {
                 Emit("acp:status", new
                 {
-                    state = "error",
-                    message = $"Không tìm thấy agy.exe tại: {agyExe}. Hãy kiểm tra đường dẫn trong Settings."
+                    state = "agy_missing",
+                    message = "Chưa cài Antigravity CLI (agy.exe)"
                 });
-                return new { ok = false, error = $"agy.exe not found at {agyExe}" };
+                return new
+                {
+                    ok = false,
+                    agyMissing = true,
+                    error = "Máy chủ chưa cài Antigravity CLI (agy.exe). Bấm nút cài tự động hoặc chạy: irm https://antigravity.google/cli/install.ps1 | iex"
+                };
             }
 
             Emit("acp:status", new { state = "connecting", message = "Đang khởi động Antigravity ACP Server..." });

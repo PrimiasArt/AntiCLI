@@ -319,6 +319,7 @@ public sealed class WorkspaceRoom : IDisposable
             "acp:logout" => await _acp.LogoutAsync(),
 
             "cli:info" => await _cli.GetCliInfoAsync(),
+            "cli:install" => await _cli.InstallAgyCliAsync(),
             "cli:models" => await _cli.ListModelsAsync(CurrentWorkspace),
             "cli:slashReport" => await _cli.RunSlashReportAsync(GetStr(payload, "command"), CurrentWorkspace),
             "cli:login" => new { ok = false, error = "Đang chạy Server từ xa: hãy đăng nhập agy 1 lần trên máy chủ hoặc nhập Gemini API Key trong Settings." },

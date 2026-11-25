@@ -258,6 +258,7 @@ function replaySingleEvent(eventName, payload) {
 async function connectAntigravity() {
   setConnStatus('connecting', 'Đang kết nối…');
   $('auth-banner').classList.add('hidden');
+  $('agy-missing-banner').classList.add('hidden');
   try {
     const res = await invoke('acp:connect');
     if (res && res.ok) {
@@ -273,6 +274,9 @@ async function connectAntigravity() {
         $('transport-pill').textContent = 'ACP';
         await refreshSessions();
       }
+    } else if (res && res.agyMissing) {
+      setConnStatus('error', 'Chưa cài agy');
+      $('agy-missing-banner').classList.remove('hidden');
     } else if (res && res.authRequired) {
       setConnStatus('auth_required', 'Cần đăng nhập');
       $('auth-banner-msg').textContent = res.error || 'Hãy đăng nhập Google hoặc dùng Gemini API Key trong Settings.';
@@ -284,6 +288,30 @@ async function connectAntigravity() {
   } catch (err) {
     setConnStatus('error', 'Lỗi kết nối');
     appendSystemMessage(`Lỗi kết nối Antigravity: ${err.message}`, true);
+  }
+}
+
+async function installAgyCliFromUi() {
+  const btn = $('btn-install-agy');
+  btn.disabled = true;
+  btn.textContent = 'Đang tải & cài agy…';
+  $('agy-missing-msg').textContent = 'Đang chạy bộ cài chính thức từ antigravity.google/cli/install.ps1 (mất khoảng 10–20 giây)…';
+  try {
+    const res = await invoke('cli:install');
+    if (res?.ok) {
+      state.cli = { installed: true, version: res.version, path: res.path };
+      $('agy-missing-banner').classList.add('hidden');
+      toast(`Đã cài xong Antigravity CLI ${res.version || ''}! Đang kết nối…`, 'ok');
+      await connectAntigravity();
+    } else {
+      $('agy-missing-msg').textContent = res?.error || res?.output || 'Cài đặt không thành công — hãy chạy lệnh trong PowerShell thủ công.';
+      toast('Cài đặt agy chưa thành công.', 'err');
+    }
+  } catch (err) {
+    $('agy-missing-msg').textContent = `Lỗi cài đặt: ${err.message}`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '⚡ Cài agy tự động';
   }
 }
 
@@ -313,6 +341,9 @@ function bindBridgeEvents() {
       $('auth-banner').classList.add('hidden');
     } else if (p.state === 'connecting') {
       setConnStatus('connecting', 'Đang kết nối…');
+    } else if (p.state === 'agy_missing') {
+      setConnStatus('error', 'Chưa cài agy');
+      $('agy-missing-banner').classList.remove('hidden');
     } else if (p.state === 'auth_required') {
       setConnStatus('auth_required', 'Cần đăng nhập');
       $('auth-banner').classList.remove('hidden');
@@ -381,11 +412,14 @@ function bindBridgeEvents() {
     if (p?.serverInfo) state.serverInfo = p.serverInfo;
     renderRoomsUi();
   });
+  let wsDropped = false;
   on('bridge:disconnected', () => {
+    wsDropped = true;
     setConnStatus('connecting', 'Đang kết nối lại…');
   });
   on('bridge:connected', () => {
-    if (state.serverMode && state.connState === 'connecting') {
+    if (state.serverMode && wsDropped) {
+      wsDropped = false;
       initializeWorkbenchData();
     }
   });
@@ -1942,6 +1976,8 @@ function bindUIEvents() {
     document.querySelector('input[name="authMode"][value="gemini-api-key"]').checked = true;
     updateAuthBoxes('gemini-api-key');
   });
+  $('btn-install-agy').addEventListener('click', installAgyCliFromUi);
+  $('btn-agy-open-settings').addEventListener('click', openSettingsModal);
 
   // Starter cards
   document.querySelectorAll('.starter-card').forEach((card) => {
